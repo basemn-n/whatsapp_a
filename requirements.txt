@@ -3,8 +3,10 @@ uvicorn
 python-dotenv
 requests
 langchain
+langchain-classic
 langchain-openai
 langchain-community
+langchain-text-splitters
 chromadb
 openai
 pydantic
