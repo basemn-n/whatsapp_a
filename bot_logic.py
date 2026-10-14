@@ -1,4 +1,3 @@
-
 import os
 import base64
 
@@ -9,14 +8,14 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 
 load_dotenv()
 
-# تحميل معلومات الشركة
+# تحميل معلومات الشركة دون استخدام OpenAI Embeddings
 company_knowledge = ""
 
 if os.path.exists("company_knowledge.txt"):
     with open("company_knowledge.txt", "r", encoding="utf-8") as f:
         company_knowledge = f.read()
 
-# إعداد ذاكرة المحادثات
+# ذاكرة المحادثات
 store = {}
 
 
@@ -26,12 +25,12 @@ def get_session_history(session_id: str) -> ChatMessageHistory:
     return store[session_id]
 
 
-# إعداد نموذج المحادثة عبر Vercel AI Gateway
+# إعداد Vercel AI Gateway
 api_key = os.getenv("AI_GATEWAY_API_KEY")
 
 if not api_key:
     raise RuntimeError(
-        "متغير AI_GATEWAY_API_KEY غير موجود في إعدادات البيئة."
+        "AI_GATEWAY_API_KEY غير موجود في إعدادات Render."
     )
 
 llm = ChatOpenAI(
@@ -41,15 +40,15 @@ llm = ChatOpenAI(
     base_url="https://ai-gateway.vercel.sh/v1",
 )
 
-# تعليمات المساعد ومعلومات الشركة
+# تعليمات خدمة العملاء
 system_prompt = (
     "أنت مساعد خدمة عملاء ذكي ومؤدب وودود.\n"
-    "أجب باللغة العربية بأسلوب احترافي ومختصر.\n"
-    "اعتمد على معلومات الشركة التالية عند الإجابة عن أسئلة الشركة.\n"
-    "لا تخترع أسعارًا أو سياسات أو معلومات غير مؤكدة.\n"
-    "إذا لم تجد المعلومة، وضح للعميل أنك تحتاج إلى التأكد منها.\n\n"
+    "تحدث باللغة العربية بأسلوب احترافي ومختصر.\n"
+    "أجب عن أسئلة الشركة اعتمادًا على المعلومات المرفقة أدناه.\n"
+    "لا تخترع أسعارًا أو سياسات أو تفاصيل غير موجودة.\n"
+    "إذا لم تجد المعلومة، أخبر العميل أنك تحتاج إلى التأكد منها.\n\n"
     "معلومات الشركة:\n"
-    + (company_knowledge or "لم تُضف معلومات الشركة بعد.")
+    + (company_knowledge or "معلومات الشركة غير متوفرة حاليًا.")
 )
 
 
@@ -60,36 +59,30 @@ def generate_ai_response(
 ) -> str:
     history = get_session_history(user_phone)
 
+    # إضافة تعليمات الشركة وسجل المحادثة
+    messages = [SystemMessage(content=system_prompt)]
+    messages.extend(history.messages)
+
     if image_bytes:
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-        image_message = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": user_message or
-                    "صف الصورة وساعدني بشأنها."
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}"
-                    }
+        user_content = [
+            {
+                "type": "text",
+                "text": user_message or
+                "يرجى وصف الصورة ومساعدة العميل بشأنها."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{base64_image}"
                 }
-            ]
-        )
+            }
+        ]
 
-        messages = (
-            [SystemMessage(content=system_prompt)]
-            + history.messages
-            + [image_message]
-        )
+        messages.append(HumanMessage(content=user_content))
     else:
-        messages = (
-            [SystemMessage(content=system_prompt)]
-            + history.messages
-            + [HumanMessage(content=user_message)]
-        )
+        messages.append(HumanMessage(content=user_message))
 
     response = llm.invoke(messages)
     answer = response.content
@@ -106,13 +99,16 @@ def generate_ai_response(
 
 
 def transcribe_audio(audio_file_path: str) -> str:
-    """تحويل الصوت إلى نص عبر OpenAI Whisper عند توفر الرصيد والمفتاح."""
+    """
+    تحويل الرسالة الصوتية إلى نص باستخدام OpenAI Whisper.
+    هذه الوظيفة تحتاج إلى مفتاح OpenAI صالح ورصيد API.
+    """
 
     openai_api_key = os.getenv("OPENAI_API_KEY")
 
     if not openai_api_key:
         raise RuntimeError(
-            "تحويل الصوت يحتاج إلى OPENAI_API_KEY صالح."
+            "تحويل الصوت يتطلب OPENAI_API_KEY في إعدادات Render."
         )
 
     from openai import OpenAI
