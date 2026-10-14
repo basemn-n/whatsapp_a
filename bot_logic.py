@@ -14,7 +14,9 @@ from langchain_core.messages import HumanMessage
 client = OpenAI()
 
 load_dotenv()
-client = OpenAI()
+from openai import OpenAI
+
+client = OpenAI()  # يستخدم OPENAI_API_KEY لتفريغ الصوت حاليًا
 
 # تحميل معلومات الشركة مباشرة دون إنشاء embeddings
 retriever = None
