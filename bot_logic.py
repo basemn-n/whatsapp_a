@@ -1,23 +1,16 @@
 import os
 import base64
 from dotenv import load_dotenv
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import CharacterTextSplitter
+from openai import OpenAI
 from langchain_openai import ChatOpenAI
-from langchain_community.vectorstores import Chroma
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import HumanMessage
-client = OpenAI()
 
 load_dotenv()
-from openai import OpenAI
 
-client = OpenAI()  # يستخدم OPENAI_API_KEY لتفريغ الصوت حاليًا
-
+# يُستخدم لتحويل الصوت فقط في الوقت الحالي
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY")
+)
 # تحميل معلومات الشركة مباشرة دون إنشاء embeddings
 retriever = None
 
@@ -36,20 +29,19 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
 # 3. إعداد النموذج والموجهات (LLM & Prompts)
 llm = ChatOpenAI(
-    model="openai/gpt-4o",
+    model="nvidia/nemotron-3.5-lightning-free",
     temperature=0.3,
     api_key=os.getenv("AI_GATEWAY_API_KEY"),
     base_url="https://ai-gateway.vercel.sh/v1",
 )
-
-system_prompt = (
+  system_prompt = (
     "أنت مساعد خدمة عملاء ذكي ومؤدب وودود.\n"
-    "أجب على أسئلة العميل بناءً على المعلومات المرفقة في السياق فقط إن وجدت.\n"
-    "إذا لم تكن المعلومة موجودة في السياق، أجب بذكاء واحترافية بناءً على قدرات الذكاء الاصطناعي مع الحفاظ على هوية خدمة العملاء.\n"
-    "تحدث دائماً باللغة العربية بأسلوب احترافي ومختصر.\n\n"
-    "{context}"
+    "أجب عن أسئلة العملاء اعتمادًا على معلومات الشركة "
+    "التالية، ولا تخترع أسعارًا أو سياسات غير موجودة فيها.\n"
+    "تحدث باللغة العربية بأسلوب احترافي ومختصر.\n\n"
+    "معلومات الشركة:\n"
+    + company_knowledge
 )
-
 def generate_ai_response(user_phone: str, user_message: str, image_bytes: bytes = None) -> str:
     history = get_session_history(user_phone)
     
