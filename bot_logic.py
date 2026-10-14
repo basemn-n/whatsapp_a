@@ -3,7 +3,7 @@ import base64
 from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import CharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
@@ -11,22 +11,18 @@ from langchain_classic.chains.combine_documents import create_stuff_documents_ch
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import HumanMessage
-from openai import OpenAI
+client = OpenAI()
 
 load_dotenv()
 client = OpenAI()
 
-# 1. إعداد قاعدة المعرفة (Vector Database)
+# تحميل معلومات الشركة مباشرة دون إنشاء embeddings
+retriever = None
+
+company_knowledge = ""
 if os.path.exists("company_knowledge.txt"):
-    loader = TextLoader("company_knowledge.txt", encoding="utf-8")
-    documents = loader.load()
-    text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    docs = text_splitter.split_documents(documents)
-    embeddings = OpenAIEmbeddings()
-    vectorstore = Chroma.from_documents(docs, embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
-else:
-    retriever = None
+    with open("company_knowledge.txt", "r", encoding="utf-8") as f:
+        company_knowledge = f.read()
 
 # 2. إعداد الذاكرة للمحادثات (Memory Store)
 store = {}
@@ -37,7 +33,12 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
     return store[session_id]
 
 # 3. إعداد النموذج والموجهات (LLM & Prompts)
-llm = ChatOpenAI(model="gpt-4o", temperature=0.3)
+llm = ChatOpenAI(
+    model="openai/gpt-4o",
+    temperature=0.3,
+    api_key=os.getenv("AI_GATEWAY_API_KEY"),
+    base_url="https://ai-gateway.vercel.sh/v1",
+)
 
 system_prompt = (
     "أنت مساعد خدمة عملاء ذكي ومؤدب وودود.\n"
