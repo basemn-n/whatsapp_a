@@ -106,3 +106,23 @@ async def receive_webhook(request: Request):
         print(f"Error processing webhook: {e}")
         
     return {"status": "ok"}
+
+from pydantic import BaseModel
+
+class TestAIRequest(BaseModel):
+    message: str
+
+@app.post("/test-ai")
+async def test_ai(request: TestAIRequest):
+    try:
+        reply = generate_ai_response(
+            user_phone="test-session",
+            user_message=request.message
+        )
+        return {"success": True, "reply": reply}
+    except Exception as e:
+        print(f"AI test error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"فشل اختبار الذكاء الاصطناعي: {str(e)}"
+        )
