@@ -8,12 +8,14 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 
 load_dotenv()
 
+# تحميل معلومات الشركة
 company_knowledge = ""
 
 if os.path.exists("company_knowledge.txt"):
     with open("company_knowledge.txt", "r", encoding="utf-8") as f:
         company_knowledge = f.read()
 
+# ذاكرة المحادثات
 store = {}
 
 
@@ -23,24 +25,27 @@ def get_session_history(session_id: str) -> ChatMessageHistory:
     return store[session_id]
 
 
-api_key = os.getenv("AI_GATEWAY_API_KEY")
+# إعداد Groq API
+api_key = os.getenv("GROQ_API_KEY")
 
 if not api_key:
     raise RuntimeError(
-        "AI_GATEWAY_API_KEY غير موجود في إعدادات Render."
+        "GROQ_API_KEY غير موجود في إعدادات Render."
     )
 
 llm = ChatOpenAI(
-    model="openai/gpt-4o-mini",
+    model="openai/gpt-oss-120b",
     temperature=0.3,
     api_key=api_key,
-    base_url="https://ai-gateway.vercel.sh/v1",
+    base_url="https://api.groq.com/openai/v1",
 )
 
+# تعليمات مساعد خدمة العملاء
 system_prompt = (
     "أنت مساعد خدمة عملاء ذكي ومؤدب وودود.\n"
-    "أجب باللغة العربية باختصار واحترافية.\n"
-    "اعتمد على معلومات الشركة أدناه، ولا تخترع الأسعار أو السياسات.\n"
+    "أجب باللغة العربية بأسلوب احترافي ومختصر.\n"
+    "اعتمد على معلومات الشركة المرفقة أدناه.\n"
+    "لا تخترع أسعارًا أو سياسات أو معلومات غير موجودة.\n"
     "إذا لم تجد المعلومة، أخبر العميل أنك تحتاج إلى التأكد منها.\n\n"
     "معلومات الشركة:\n"
     + (company_knowledge or "معلومات الشركة غير متوفرة حاليًا.")
@@ -59,10 +64,11 @@ def generate_ai_response(
 
     if image_bytes:
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
+
         user_content = [
             {
                 "type": "text",
-                "text": user_message or "صف الصورة وساعد العميل بشأنها."
+                "text": user_message or "يرجى وصف الصورة ومساعدة العميل بشأنها."
             },
             {
                 "type": "image_url",
@@ -71,6 +77,7 @@ def generate_ai_response(
                 }
             }
         ]
+
         messages.append(HumanMessage(content=user_content))
     else:
         messages.append(HumanMessage(content=user_message))
@@ -89,6 +96,6 @@ def generate_ai_response(
 
 def transcribe_audio(audio_file_path: str) -> str:
     raise RuntimeError(
-        "تحويل الصوت غير مفعّل في هذا الإصدار؛ "
-        "سنفعّله لاحقًا إذا احتجت إليه."
+        "تحويل الصوت غير مفعّل حاليًا. "
+        "يمكن للبوت استقبال النصوص بعد نجاح اختبار الاتصال."
     )
