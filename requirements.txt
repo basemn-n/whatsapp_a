@@ -10,3 +10,4 @@ langchain-text-splitters
 chromadb
 openai
 pydantic
+supabase
