@@ -1,4 +1,4 @@
-
+import requests
 import os
 import hmac
 import logging
@@ -42,7 +42,47 @@ class ProductUpdate(BaseModel):
     currency: str = Field(default="YER", min_length=1, max_length=10)
     is_available: bool
 
+def send_telegram_status_notification(chat_id, order):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
+    if not token or not chat_id:
+        return False
+
+    status = order.get("status", "")
+    status_label = STATUSES.get(status, status)
+
+    order_number = order.get("order_number") or order.get("id")
+    product_name = order.get("product_name") or "غير محدد"
+
+    message = (
+        "🔔 تحديث حالة طلبك\n\n"
+        f"رقم الطلب: {order_number}\n"
+        f"المنتج: {product_name}\n"
+        f"الحالة الجديدة: {status_label}\n\n"
+        "شكرًا لثقتك بنا."
+    )
+
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": str(chat_id),
+                "text": message,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+
+        result = response.json()
+        if not result.get("ok"):
+            logger.warning("Telegram notification was not accepted.")
+            return False
+
+        return True
+
+    except Exception:
+        logger.exception("Failed to send Telegram order notification.")
+        return False
 def create_admin_router(supabase):
     router = APIRouter()
 
@@ -985,7 +1025,7 @@ loadOrders();
                 detail="تعذر تحميل الطلبات",
             )
 
-    @router.patch("/api/admin/orders/{order_id}/status")
+       @router.patch("/api/admin/orders/{order_id}/status")
     def update_status(
         order_id: str,
         payload: StatusUpdate,
@@ -998,20 +1038,57 @@ loadOrders();
             )
 
         try:
-            result = (
+            # قراءة الطلب وحالته السابقة ووجهة إشعار تيليجرام.
+            existing_result = (
                 supabase.table("orders")
-                .update({"status": payload.status})
+                .select(
+                    "id, order_number, customer_name, product_name, "
+                    "status, telegram_chat_id"
+                )
                 .eq("id", order_id)
+                .limit(1)
                 .execute()
             )
 
-            if not result.data:
+            if not existing_result.data:
                 raise HTTPException(
                     status_code=404,
                     detail="الطلب غير موجود",
                 )
 
-            return {"success": True, "order": result.data[0]}
+            existing = existing_result.data[0]
+            old_status = existing.get("status")
+
+            # تحديث حالة الطلب في قاعدة البيانات أولًا.
+            updated_result = (
+                supabase.table("orders")
+                .update({"status": payload.status})
+                .eq("id", order_id)
+                .select("*")
+                .execute()
+            )
+
+            if not updated_result.data:
+                raise HTTPException(
+                    status_code=404,
+                    detail="تعذر تحديث الطلب أو أن الطلب غير موجود",
+                )
+
+            updated = updated_result.data[0]
+            notification_sent = False
+
+            # لا نرسل إشعارًا إذا لم تتغير الحالة فعليًا.
+            if old_status != payload.status:
+                notification_sent = send_telegram_status_notification(
+                    existing.get("telegram_chat_id"),
+                    updated,
+                )
+
+            return {
+                "success": True,
+                "order": updated,
+                "notification_sent": notification_sent,
+            }
 
         except HTTPException:
             raise
@@ -1019,7 +1096,6 @@ loadOrders();
             logger.exception("تعذر تحديث حالة الطلب")
             raise HTTPException(
                 status_code=500,
-                detail="تعذر تحديث حالة الطلب",
+                detail="تعذر تحديث حالة الطلب. تحقق من إعدادات قاعدة البيانات.",
             )
-
-    return router
+                return router
