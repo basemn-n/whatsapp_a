@@ -1,4 +1,4 @@
-```python
+
 import os
 import re
 import asyncio
@@ -1112,4 +1112,3 @@ async def home():
         "message": "Customer service bot is running.",
         "supabase_configured": supabase is not None,
     }
-```
