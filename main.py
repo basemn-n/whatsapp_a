@@ -1,10 +1,12 @@
 
 import os
+import re
 import asyncio
 import logging
 import requests
 import tempfile
 import uuid
+import threading
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, HTTPException
@@ -40,10 +42,7 @@ if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     except Exception:
         logger.exception("تعذر تهيئة اتصال Supabase.")
 else:
-    logger.warning(
-        "إعدادات Supabase غير مكتملة؛ "
-        "سيعمل البوت بالمعلومات الافتراضية."
-    )
+    logger.warning("إعدادات Supabase غير مكتملة.")
 
 
 # -----------------------------
@@ -67,23 +66,25 @@ def get_business_context(business_id: str):
             return None
 
         business = business_result.data[0]
+        settings = {}
 
-        settings_result = (
-            supabase.table("business_settings")
-            .select(
-                "business_description, business_policies, "
-                "business_hours, currency"
+        try:
+            settings_result = (
+                supabase.table("business_settings")
+                .select(
+                    "business_description, business_policies, "
+                    "business_hours, currency"
+                )
+                .eq("business_id", business_id)
+                .limit(1)
+                .execute()
             )
-            .eq("business_id", business_id)
-            .limit(1)
-            .execute()
-        )
-
-        settings = (
-            settings_result.data[0]
-            if settings_result.data
-            else {}
-        )
+            if settings_result.data:
+                settings = settings_result.data[0]
+        except Exception:
+            logger.warning(
+                "تعذر قراءة إعدادات النشاط؛ ستستخدم المعلومات المتاحة."
+            )
 
         products_result = (
             supabase.table("products")
@@ -109,10 +110,7 @@ def get_business_context(business_id: str):
                 "السياسات: "
                 f"{settings.get('business_policies') or 'غير محددة'}"
             ),
-            (
-                "العملة الافتراضية: "
-                f"{settings.get('currency') or 'YER'}"
-            ),
+            f"العملة الافتراضية: {settings.get('currency') or 'YER'}",
             "",
             "المنتجات:",
         ]
@@ -120,7 +118,7 @@ def get_business_context(business_id: str):
         products = products_result.data or []
 
         if not products:
-            lines.append("لا توجد منتجات مسجلة في قاعدة البيانات.")
+            lines.append("لا توجد منتجات مسجلة.")
         else:
             for product in products:
                 availability = (
@@ -128,9 +126,8 @@ def get_business_context(business_id: str):
                     if product.get("is_available")
                     else "غير متاح"
                 )
-
                 lines.append(
-                    f"- {product.get('name', 'منتج')}: "
+                    f"- {product.get('name') or 'منتج'}: "
                     f"{product.get('description') or ''}; "
                     f"السعر: {product.get('price')}; "
                     f"العملة: {product.get('currency') or settings.get('currency') or 'YER'}; "
@@ -197,37 +194,93 @@ def save_telegram_business(chat_id: int, business_id: str):
         logger.exception("تعذر حفظ ارتباط Telegram بالنشاط.")
         return False
 
+
+def get_available_products(business_id: str):
+    if not supabase or not business_id:
+        return []
+
+    try:
+        result = (
+            supabase.table("products")
+            .select("name, description, price, currency, is_available")
+            .eq("business_id", business_id)
+            .eq("is_available", True)
+            .execute()
+        )
+        return result.data or []
+
+    except Exception:
+        logger.exception("تعذر قراءة المنتجات المتاحة.")
+        return []
+
+
 # -----------------------------
 # Telegram order management
 # -----------------------------
 
-# بيانات الطلبات التي لم يكتمل جمعها بعد.
-# ملاحظة: تبقى في الذاكرة حتى إعادة تشغيل الخدمة.
+# حالة الطلب المؤقتة لكل محادثة.
+# الطلبات غير المكتملة تُفقد عند إعادة تشغيل الخدمة.
 pending_telegram_orders = {}
+order_lock = threading.Lock()
+
+
+def normalize_text(value: str):
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def find_product(products, user_text):
+    text = normalize_text(user_text)
+
+    if not text:
+        return None
+
+    for product in products:
+        name = normalize_text(product.get("name", ""))
+
+        if name and (text == name or name in text):
+            return product
+
+    return None
+
+
+def parse_quantity(value: str):
+    digits = str(value or "").translate(
+        str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+    )
+
+    match = re.search(r"\d+", digits)
+
+    if not match:
+        return None
+
+    quantity = int(match.group())
+
+    if quantity < 1 or quantity > 1000:
+        return None
+
+    return quantity
 
 
 def save_telegram_order(chat_id: int, order_data: dict):
-    """حفظ طلب مكتمل في قاعدة بيانات Supabase."""
+    """حفظ طلب مؤكد في جدول orders وإرجاع بياناته."""
 
     if not supabase:
-        logger.error("لا يمكن تسجيل الطلب: Supabase غير متصل.")
+        logger.error("تعذر تسجيل الطلب: Supabase غير متصل.")
         return None
 
-    business_id = get_telegram_business_id(chat_id)
+    business_id = order_data.get("business_id")
 
     if not business_id:
-        logger.warning(
-            "لا يمكن تسجيل الطلب: المحادثة غير مرتبطة بنشاط تجاري."
-        )
+        logger.error("تعذر تسجيل الطلب: business_id غير موجود.")
         return None
 
-    required_fields = [
+    required_fields = (
         "customer_name",
         "customer_phone",
         "customer_address",
         "payment_method",
         "product_name",
-    ]
+    )
 
     if any(
         not str(order_data.get(field, "")).strip()
@@ -235,7 +288,40 @@ def save_telegram_order(chat_id: int, order_data: dict):
     ):
         return None
 
+    quantity = parse_quantity(str(order_data.get("quantity", 1)))
+
+    if not quantity:
+        return None
+
     try:
+        # إعادة التأكد من أن النشاط التجاري موجود.
+        business_result = (
+            supabase.table("businesses")
+            .select("id")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not business_result.data:
+            logger.error("النشاط التجاري المرتبط بالطلب غير موجود.")
+            return None
+
+        # إعادة التأكد من أن المنتج ما زال متاحًا.
+        product_result = (
+            supabase.table("products")
+            .select("name, is_available")
+            .eq("business_id", business_id)
+            .eq("name", order_data["product_name"])
+            .eq("is_available", True)
+            .limit(1)
+            .execute()
+        )
+
+        if not product_result.data:
+            logger.warning("المنتج لم يعد متاحًا؛ لم يُحفظ الطلب.")
+            return None
+
         result = (
             supabase.table("orders")
             .insert({
@@ -244,8 +330,8 @@ def save_telegram_order(chat_id: int, order_data: dict):
                 "customer_phone": order_data["customer_phone"].strip(),
                 "customer_address": order_data["customer_address"].strip(),
                 "payment_method": order_data["payment_method"].strip(),
-                "product_name": order_data["product_name"].strip(),
-                "quantity": int(order_data.get("quantity", 1)),
+                "product_name": product_result.data[0]["name"],
+                "quantity": quantity,
                 "status": "pending",
             })
             .select("id, order_number, status")
@@ -262,6 +348,224 @@ def save_telegram_order(chat_id: int, order_data: dict):
         logger.exception("فشل حفظ طلب Telegram في Supabase.")
         return None
 
+
+def begin_telegram_order(chat_id: int, business_id: str, user_text: str):
+    products = get_available_products(business_id)
+
+    if not products:
+        return "عذرًا، لا توجد منتجات متاحة للطلب حاليًا."
+
+    selected = find_product(products, user_text)
+
+    with order_lock:
+        pending_telegram_orders[chat_id] = {
+            "business_id": business_id,
+            "stage": "quantity" if selected else "product",
+            "product_name": selected.get("name") if selected else None,
+            "quantity": 1,
+        }
+
+    if selected:
+        return (
+            f"تم اختيار: {selected['name']}\n"
+            "كم قطعة تريد طلبها؟ أرسل العدد بالأرقام."
+        )
+
+    product_lines = [
+        f"- {product.get('name')}: {product.get('price')} "
+        f"{product.get('currency') or 'YER'}"
+        for product in products
+    ]
+
+    return (
+        "يسعدني مساعدتك في تسجيل طلبك.\n"
+        "اختر المنتج الذي تريد طلبه من المنتجات المتاحة:\n\n"
+        + "\n".join(product_lines)
+        + "\n\nأرسل اسم المنتج كما يظهر في القائمة، أو أرسل /cancel للإلغاء."
+    )
+
+
+def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
+    text = user_text.strip()
+    normalized = normalize_text(text)
+
+    if normalized in ("/cancel", "إلغاء", "الغاء", "الغاء الطلب", "إلغاء الطلب"):
+        with order_lock:
+            pending_telegram_orders.pop(chat_id, None)
+        return "تم إلغاء الطلب الجاري. يمكنك البدء من جديد متى شئت."
+
+    with order_lock:
+        state = pending_telegram_orders.get(chat_id)
+
+    order_intents = (
+        "أريد طلب",
+        "اريد طلب",
+        "أريد شراء",
+        "اريد شراء",
+        "أبغى أطلب",
+        "ابغى اطلب",
+        "طلب منتج",
+        "تسجيل طلب",
+        "أريد أن أطلب",
+        "اريد ان اطلب",
+    )
+
+    if state is None:
+        if not any(intent in text for intent in order_intents):
+            return None
+
+        if not business_id:
+            return (
+                "لا يمكنني تسجيل الطلب بعد لأن هذه المحادثة غير مرتبطة "
+                "بنشاط تجاري. افتح رابط البوت الخاص بالنشاط ثم حاول مجددًا."
+            )
+
+        return begin_telegram_order(chat_id, business_id, text)
+
+    # لا تسمح بتغيير النشاط المرتبط بالطلب الجاري.
+    if not state.get("business_id"):
+        with order_lock:
+            pending_telegram_orders.pop(chat_id, None)
+        return "تعذر تحديد النشاط التجاري. ابدأ الطلب من رابط النشاط الصحيح."
+
+    stage = state.get("stage")
+
+    if stage == "product":
+        products = get_available_products(state["business_id"])
+        selected = find_product(products, text)
+
+        if not selected:
+            names = "\n".join(
+                f"- {product.get('name')}"
+                for product in products
+            )
+            return (
+                "لم أجد هذا المنتج ضمن المنتجات المتاحة. "
+                "اختر اسمًا من القائمة التالية:\n"
+                f"{names}\n\nأرسل /cancel للإلغاء."
+            )
+
+        with order_lock:
+            state["product_name"] = selected["name"]
+            state["stage"] = "quantity"
+
+        return (
+            f"تم اختيار: {selected['name']}\n"
+            "كم قطعة تريد طلبها؟ أرسل العدد بالأرقام."
+        )
+
+    if stage == "quantity":
+        quantity = parse_quantity(text)
+
+        if not quantity:
+            return "أرسل كمية صحيحة من 1 إلى 1000."
+
+        with order_lock:
+            state["quantity"] = quantity
+            state["stage"] = "customer_name"
+
+        return "ما اسمك الكامل؟"
+
+    if stage == "customer_name":
+        if len(text) < 2 or len(text) > 150:
+            return "يرجى إدخال الاسم بصورة صحيحة."
+
+        with order_lock:
+            state["customer_name"] = text
+            state["stage"] = "customer_phone"
+
+        return "ما رقم الهاتف الذي يمكن التواصل معك من خلاله؟"
+
+    if stage == "customer_phone":
+        phone = re.sub(r"[^\d+]", "", text)
+
+        if not re.fullmatch(r"\+?\d{7,15}", phone):
+            return (
+                "يرجى إدخال رقم هاتف صحيح يتكون من 7 إلى 15 رقمًا، "
+                "ويمكنك إضافة علامة + في البداية."
+            )
+
+        with order_lock:
+            state["customer_phone"] = phone
+            state["stage"] = "customer_address"
+
+        return "ما عنوان التوصيل الكامل؟ اذكر المدينة والمنطقة والشارع."
+
+    if stage == "customer_address":
+        if len(text) < 5 or len(text) > 500:
+            return "يرجى إدخال عنوان توصيل أوضح."
+
+        with order_lock:
+            state["customer_address"] = text
+            state["stage"] = "payment_method"
+
+        return (
+            "ما طريقة الدفع المفضلة لديك؟\n"
+            "اذكر الطريقة المتاحة التي تفضلها، مثل المحفظة الإلكترونية "
+            "أو التحويل البنكي. لن نؤكد توفر وسيلة دفع قبل التحقق منها."
+        )
+
+    if stage == "payment_method":
+        if len(text) < 2 or len(text) > 100:
+            return "يرجى إدخال طريقة الدفع التي تفضلها."
+
+        with order_lock:
+            state["payment_method"] = text
+            state["stage"] = "confirmation"
+
+        return (
+            "يرجى مراجعة تفاصيل طلبك:\n\n"
+            f"المنتج: {state['product_name']}\n"
+            f"الكمية: {state['quantity']}\n"
+            f"الاسم: {state['customer_name']}\n"
+            f"الهاتف: {state['customer_phone']}\n"
+            f"العنوان: {state['customer_address']}\n"
+            f"طريقة الدفع المطلوبة: {state['payment_method']}\n\n"
+            "هل تؤكد رغبتك في تسجيل الطلب؟\n"
+            "أرسل نعم للتأكيد أو لا للإلغاء."
+        )
+
+    if stage == "confirmation":
+        yes_values = ("نعم", "أؤكد", "اكد", "تأكيد", "تأكيد الطلب", "yes", "confirm")
+        no_values = ("لا", "إلغاء", "الغاء", "لا أريد", "no", "cancel")
+
+        if normalized in yes_values:
+            saved = save_telegram_order(chat_id, state)
+
+            if not saved:
+                return (
+                    "لم أتمكن من تسجيل الطلب في قاعدة البيانات، "
+                    "لذلك لم يتم تأكيده. يرجى المحاولة لاحقًا أو التواصل "
+                    "مع خدمة العملاء."
+                )
+
+            with order_lock:
+                pending_telegram_orders.pop(chat_id, None)
+
+            return (
+                "تم تسجيل طلبك بنجاح في النظام. ✅\n\n"
+                f"رقم الطلب: {saved.get('order_number')}\n"
+                f"الحالة: {saved.get('status')}\n\n"
+                "الحالة الحالية هي قيد المراجعة، وليست تأكيدًا للتوصيل "
+                "أو استلام الدفع."
+            )
+
+        if normalized in no_values:
+            with order_lock:
+                pending_telegram_orders.pop(chat_id, None)
+            return "تم إلغاء الطلب، ولم يتم حفظه."
+
+        return "أرسل «نعم» لتأكيد الطلب، أو «لا» لإلغائه."
+
+    with order_lock:
+        pending_telegram_orders.pop(chat_id, None)
+
+    return "انتهت حالة الطلب. أرسل «أريد طلب» للبدء من جديد."
+
+
+# -----------------------------
+# WhatsApp business context
+# -----------------------------
 
 def get_whatsapp_business_context():
     if not supabase or not PHONE_NUMBER_ID:
@@ -326,7 +630,6 @@ def send_whatsapp_message(to_phone: str, message_text: str):
             timeout=20,
         )
         response.raise_for_status()
-
     except requests.RequestException:
         logger.exception("فشل إرسال رسالة WhatsApp.")
 
@@ -338,9 +641,8 @@ def download_whatsapp_media(media_id: str):
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}"
     }
-    endpoint = (
-        f"https://graph.facebook.com/v19.0/{media_id}"
-    )
+
+    endpoint = f"https://graph.facebook.com/v19.0/{media_id}"
 
     try:
         response = requests.get(
@@ -372,7 +674,6 @@ def download_whatsapp_media(media_id: str):
 # -----------------------------
 # Telegram functions
 # -----------------------------
-
 
 def telegram_api(method: str, payload=None, timeout=20):
     if not TELEGRAM_BOT_TOKEN:
@@ -417,7 +718,6 @@ def telegram_api(method: str, payload=None, timeout=20):
     return result.get("result")
 
 
-
 async def send_telegram_message(chat_id: int, text: str):
     text = str(text or "عذرًا، لا يوجد رد حاليًا.")
 
@@ -435,13 +735,10 @@ async def send_telegram_message(chat_id: int, text: str):
 
 async def telegram_polling():
     if not TELEGRAM_BOT_TOKEN:
-        logger.error(
-            "Telegram غير مفعّل: الرمز غير موجود."
-        )
+        logger.error("Telegram غير مفعّل: الرمز غير موجود.")
         return
 
     offset = 0
-
     logger.info("بدأ استقبال رسائل Telegram.")
 
     try:
@@ -478,6 +775,7 @@ async def telegram_polling():
                 message = update.get("message", {})
                 chat = message.get("chat", {})
                 chat_id = chat.get("id")
+
                 user_text = (
                     message.get("text") or ""
                 ).strip()
@@ -487,28 +785,19 @@ async def telegram_polling():
 
                 if user_text.startswith("/start"):
                     parts = user_text.split(maxsplit=1)
-                    payload = (
-                        parts[1].strip()
-                        if len(parts) > 1
-                        else ""
-                    )
+                    payload = parts[1].strip() if len(parts) > 1 else ""
 
                     business_id = None
 
                     if payload:
                         try:
-                            business_id = str(
-                                uuid.UUID(payload)
-                            )
+                            business_id = str(uuid.UUID(payload))
                         except ValueError:
                             business_id = None
 
                     if (
                         business_id
-                        and save_telegram_business(
-                            chat_id,
-                            business_id,
-                        )
+                        and save_telegram_business(chat_id, business_id)
                     ):
                         reply = (
                             "مرحبًا بك! 👋\n"
@@ -519,40 +808,52 @@ async def telegram_polling():
                         reply = (
                             "مرحبًا بك! 👋\n"
                             "أنا مساعد خدمة العملاء الذكي.\n"
-                            "لربط محادثتك بنشاط تجاري، افتح رابط "
-                            "Telegram الخاص بذلك النشاط."
+                            "يمكنك إرسال سؤالك في أي وقت."
                         )
 
-                elif user_text.startswith("/"):
-                    reply = "أرسل سؤالك في رسالة نصية."
+                elif user_text.startswith("/cancel"):
+                    with order_lock:
+                        pending_telegram_orders.pop(chat_id, None)
+                    reply = "تم إلغاء الطلب الجاري."
 
                 else:
                     try:
-                        business_id = (
-                            get_telegram_business_id(chat_id)
-                        )
+                        business_id = get_telegram_business_id(chat_id)
 
-                        context = (
-                            get_business_context(business_id)
-                            if business_id
-                            else None
-                        )
-
-                        reply = await asyncio.to_thread(
-                            generate_ai_response,
-                            f"telegram_{chat_id}",
+                        # إدارة الطلبات خارج الذكاء الاصطناعي
+                        # حتى لا يدّعي البوت تسجيل طلب غير محفوظ.
+                        order_reply = handle_telegram_order(
+                            chat_id,
                             user_text,
-                            None,
-                            context,
-                            (
-                                f"telegram_{chat_id}_"
-                                f"{business_id or 'default'}"
-                            ),
+                            business_id,
                         )
+
+                        if order_reply is not None:
+                            reply = order_reply
+                        elif user_text.startswith("/"):
+                            reply = "الأوامر المتاحة: /start و /cancel"
+                        else:
+                            context = (
+                                get_business_context(business_id)
+                                if business_id
+                                else None
+                            )
+
+                            reply = await asyncio.to_thread(
+                                generate_ai_response,
+                                f"telegram_{chat_id}",
+                                user_text,
+                                None,
+                                context,
+                                (
+                                    f"telegram_{chat_id}_"
+                                    f"{business_id or 'default'}"
+                                ),
+                            )
 
                     except Exception:
                         logger.exception(
-                            "فشل توليد رد Telegram."
+                            "فشل معالجة رسالة Telegram."
                         )
                         reply = (
                             "عذرًا، حدث خطأ مؤقت. "
@@ -560,22 +861,15 @@ async def telegram_polling():
                         )
 
                 try:
-                    await send_telegram_message(
-                        chat_id,
-                        reply,
-                    )
+                    await send_telegram_message(chat_id, reply)
                 except Exception:
-                    logger.exception(
-                        "فشل إرسال رد Telegram."
-                    )
+                    logger.exception("فشل إرسال رد Telegram.")
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
-            logger.exception(
-                "حدث خطأ في استقبال Telegram."
-            )
+            logger.exception("حدث خطأ في استقبال Telegram.")
             await asyncio.sleep(5)
 
 
@@ -585,9 +879,7 @@ async def telegram_polling():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    telegram_task = asyncio.create_task(
-        telegram_polling()
-    )
+    telegram_task = asyncio.create_task(telegram_polling())
     app.state.telegram_task = telegram_task
 
     try:
@@ -658,9 +950,7 @@ async def receive_webhook(request: Request):
 
                     if msg_type == "text":
                         user_text = (
-                            message.get("text", {}).get(
-                                "body", ""
-                            )
+                            message.get("text", {}).get("body", "")
                         )
 
                     elif msg_type == "image":
@@ -685,9 +975,7 @@ async def receive_webhook(request: Request):
                             continue
 
                     elif msg_type in ("audio", "voice"):
-                        audio_data = message.get(
-                            msg_type, {}
-                        )
+                        audio_data = message.get(msg_type, {})
 
                         audio_bytes = await asyncio.to_thread(
                             download_whatsapp_media,
@@ -713,16 +1001,11 @@ async def receive_webhook(request: Request):
                             )
 
                         except Exception:
-                            logger.exception(
-                                "فشل تحويل الرسالة الصوتية."
-                            )
+                            logger.exception("فشل تحويل الرسالة الصوتية.")
                             continue
 
                         finally:
-                            if (
-                                temp_path
-                                and os.path.exists(temp_path)
-                            ):
+                            if temp_path and os.path.exists(temp_path):
                                 os.remove(temp_path)
 
                     else:
@@ -750,9 +1033,7 @@ async def receive_webhook(request: Request):
                     )
 
     except Exception:
-        logger.exception(
-            "حدث خطأ أثناء معالجة Webhook واتساب."
-        )
+        logger.exception("حدث خطأ أثناء معالجة Webhook واتساب.")
 
     return {"status": "ok"}
 
@@ -780,9 +1061,7 @@ async def test_ai(request: TestAIRequest):
         }
 
     except Exception:
-        logger.exception(
-            "فشل اختبار الذكاء الاصطناعي."
-        )
+        logger.exception("فشل اختبار الذكاء الاصطناعي.")
 
         raise HTTPException(
             status_code=500,
