@@ -220,9 +220,83 @@ def get_available_products(business_id: str):
 # Telegram order management
 # -----------------------------
 
-# الطلبات غير المكتملة تُفقد عند إعادة تشغيل الخدمة.
+# تُحفظ الطلبات الجارية في Supabase حتى تبقى بعد إعادة تشغيل Render.
+# تبقى الذاكرة المحلية كخطة احتياطية إذا لم يُنشأ الجدول بعد.
 pending_telegram_orders = {}
 order_lock = threading.Lock()
+
+
+def load_pending_telegram_order(chat_id: int):
+    if supabase is not None:
+        try:
+            result = (
+                supabase.table("telegram_pending_orders")
+                .select("state")
+                .eq("chat_id", int(chat_id))
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                state = result.data[0].get("state")
+                if isinstance(state, dict):
+                    with order_lock:
+                        pending_telegram_orders[chat_id] = state
+                    return state
+            with order_lock:
+                pending_telegram_orders.pop(chat_id, None)
+            return None
+        except Exception:
+            logger.warning(
+                "تعذر تحميل حالة الطلب من Supabase؛ ستُستخدم الذاكرة المحلية. "
+                "تأكد من إنشاء جدول telegram_pending_orders."
+            )
+
+    with order_lock:
+        state = pending_telegram_orders.get(chat_id)
+        return dict(state) if isinstance(state, dict) else None
+
+
+def persist_pending_telegram_order(chat_id: int, state: dict):
+    with order_lock:
+        pending_telegram_orders[chat_id] = dict(state)
+
+    if supabase is None:
+        return False
+
+    try:
+        supabase.table("telegram_pending_orders").upsert(
+            {
+                "chat_id": int(chat_id),
+                "business_id": state.get("business_id"),
+                "state": state,
+            },
+            on_conflict="chat_id",
+        ).execute()
+        return True
+    except Exception:
+        logger.warning(
+            "تعذر حفظ حالة الطلب في Supabase. أنشئ جدول "
+            "telegram_pending_orders باستخدام ملف SQL المرفق."
+        )
+        return False
+
+
+def clear_pending_telegram_order(chat_id: int):
+    with order_lock:
+        pending_telegram_orders.pop(chat_id, None)
+
+    if supabase is None:
+        return
+
+    try:
+        supabase.table("telegram_pending_orders").delete().eq(
+            "chat_id", int(chat_id)
+        ).execute()
+    except Exception:
+        logger.warning(
+            "تعذر حذف حالة الطلب من Supabase؛ تحقق من جدول "
+            "telegram_pending_orders."
+        )
 
 
 def normalize_text(value: str):
@@ -362,13 +436,13 @@ def begin_telegram_order(chat_id: int, business_id: str, user_text: str):
 
     selected = find_product(products, user_text)
 
-    with order_lock:
-        pending_telegram_orders[chat_id] = {
-            "business_id": business_id,
-            "stage": "quantity" if selected else "product",
-            "product_name": selected.get("name") if selected else None,
-            "quantity": 1,
-        }
+    state = {
+        "business_id": business_id,
+        "stage": "quantity" if selected else "product",
+        "product_name": selected.get("name") if selected else None,
+        "quantity": 1,
+    }
+    persist_pending_telegram_order(chat_id, state)
 
     if selected:
         return (
@@ -401,12 +475,10 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         "الغاء الطلب",
         "إلغاء الطلب",
     ):
-        with order_lock:
-            pending_telegram_orders.pop(chat_id, None)
+        clear_pending_telegram_order(chat_id)
         return "تم إلغاء الطلب الجاري. يمكنك البدء من جديد متى شئت."
 
-    with order_lock:
-        state = pending_telegram_orders.get(chat_id)
+    state = load_pending_telegram_order(chat_id)
 
     order_intents = (
         "أريد طلب",
@@ -434,8 +506,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         return begin_telegram_order(chat_id, business_id, text)
 
     if not state.get("business_id"):
-        with order_lock:
-            pending_telegram_orders.pop(chat_id, None)
+        clear_pending_telegram_order(chat_id)
         return "تعذر تحديد النشاط التجاري. ابدأ الطلب من رابط النشاط الصحيح."
 
     stage = state.get("stage")
@@ -458,6 +529,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         with order_lock:
             state["product_name"] = selected["name"]
             state["stage"] = "quantity"
+        persist_pending_telegram_order(chat_id, state)
 
         return (
             f"تم اختيار: {selected['name']}\n"
@@ -473,6 +545,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         with order_lock:
             state["quantity"] = quantity
             state["stage"] = "customer_name"
+        persist_pending_telegram_order(chat_id, state)
 
         return "ما اسمك الكامل؟"
 
@@ -483,6 +556,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         with order_lock:
             state["customer_name"] = text
             state["stage"] = "customer_phone"
+        persist_pending_telegram_order(chat_id, state)
 
         return "ما رقم الهاتف الذي يمكن التواصل معك من خلاله؟"
 
@@ -498,6 +572,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         with order_lock:
             state["customer_phone"] = phone
             state["stage"] = "customer_address"
+        persist_pending_telegram_order(chat_id, state)
 
         return "ما عنوان التوصيل الكامل؟ اذكر المدينة والمنطقة والشارع."
 
@@ -508,6 +583,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         with order_lock:
             state["customer_address"] = text
             state["stage"] = "payment_method"
+        persist_pending_telegram_order(chat_id, state)
 
         return (
             "ما طريقة الدفع المفضلة لديك؟\n"
@@ -522,6 +598,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         with order_lock:
             state["payment_method"] = text
             state["stage"] = "confirmation"
+        persist_pending_telegram_order(chat_id, state)
 
         return (
             "يرجى مراجعة تفاصيل طلبك:\n\n"
@@ -564,8 +641,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
                     "مع خدمة العملاء."
                 )
 
-            with order_lock:
-                pending_telegram_orders.pop(chat_id, None)
+            clear_pending_telegram_order(chat_id)
 
             return (
                 "تم تسجيل طلبك بنجاح في النظام. ✅\n\n"
@@ -582,8 +658,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         return "أرسل «نعم» لتأكيد الطلب، أو «لا» لإلغائه."
 
-    with order_lock:
-        pending_telegram_orders.pop(chat_id, None)
+    clear_pending_telegram_order(chat_id)
 
     return "انتهت حالة الطلب. أرسل «أريد طلب» للبدء من جديد."
 
@@ -860,8 +935,7 @@ async def process_telegram_update(update: dict):
             )
 
     elif user_text.startswith("/cancel"):
-        with order_lock:
-            pending_telegram_orders.pop(chat_id, None)
+        clear_pending_telegram_order(chat_id)
         reply = "تم إلغاء الطلب الجاري."
 
     else:
