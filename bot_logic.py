@@ -40,6 +40,14 @@ llm = ChatOpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
+# نموذج منفصل يدعم الصور؛ نموذج GPT-OSS النصي لا يستقبل الصور.
+vision_llm = ChatOpenAI(
+    model=os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b"),
+    temperature=0.3,
+    api_key=api_key,
+    base_url="https://api.groq.com/openai/v1",
+)
+
 
 def generate_ai_response(
     user_phone: str,
@@ -94,7 +102,7 @@ def generate_ai_response(
     else:
         messages.append(HumanMessage(content=user_message))
 
-    response = llm.invoke(messages)
+    response = (vision_llm if image_bytes else llm).invoke(messages)
     answer = response.content
 
     if not isinstance(answer, str):
