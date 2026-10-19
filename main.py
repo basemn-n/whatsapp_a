@@ -1,4 +1,4 @@
-
+```python
 import os
 import re
 import asyncio
@@ -218,7 +218,6 @@ def get_available_products(business_id: str):
 # Telegram order management
 # -----------------------------
 
-# حالة الطلب المؤقتة لكل محادثة.
 # الطلبات غير المكتملة تُفقد عند إعادة تشغيل الخدمة.
 pending_telegram_orders = {}
 order_lock = threading.Lock()
@@ -245,7 +244,10 @@ def find_product(products, user_text):
 
 def parse_quantity(value: str):
     digits = str(value or "").translate(
-        str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+        str.maketrans(
+            "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹",
+            "01234567890123456789",
+        )
     )
 
     match = re.search(r"\d+", digits)
@@ -262,7 +264,7 @@ def parse_quantity(value: str):
 
 
 def save_telegram_order(chat_id: int, order_data: dict):
-    """حفظ طلب مؤكد في جدول orders وإرجاع بياناته."""
+    """حفظ طلب مؤكد مع رقم محادثة تيليجرام."""
 
     if not supabase:
         logger.error("تعذر تسجيل الطلب: Supabase غير متصل.")
@@ -294,7 +296,6 @@ def save_telegram_order(chat_id: int, order_data: dict):
         return None
 
     try:
-        # إعادة التأكد من أن النشاط التجاري موجود.
         business_result = (
             supabase.table("businesses")
             .select("id")
@@ -307,7 +308,6 @@ def save_telegram_order(chat_id: int, order_data: dict):
             logger.error("النشاط التجاري المرتبط بالطلب غير موجود.")
             return None
 
-        # إعادة التأكد من أن المنتج ما زال متاحًا.
         product_result = (
             supabase.table("products")
             .select("name, is_available")
@@ -333,6 +333,9 @@ def save_telegram_order(chat_id: int, order_data: dict):
                 "product_name": product_result.data[0]["name"],
                 "quantity": quantity,
                 "status": "pending",
+
+                # الإضافة المطلوبة لإرسال إشعارات حالة الطلب:
+                "telegram_chat_id": str(chat_id),
             })
             .select("id, order_number, status")
             .execute()
@@ -389,7 +392,13 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
     text = user_text.strip()
     normalized = normalize_text(text)
 
-    if normalized in ("/cancel", "إلغاء", "الغاء", "الغاء الطلب", "إلغاء الطلب"):
+    if normalized in (
+        "/cancel",
+        "إلغاء",
+        "الغاء",
+        "الغاء الطلب",
+        "إلغاء الطلب",
+    ):
         with order_lock:
             pending_telegram_orders.pop(chat_id, None)
         return "تم إلغاء الطلب الجاري. يمكنك البدء من جديد متى شئت."
@@ -422,7 +431,6 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         return begin_telegram_order(chat_id, business_id, text)
 
-    # لا تسمح بتغيير النشاط المرتبط بالطلب الجاري.
     if not state.get("business_id"):
         with order_lock:
             pending_telegram_orders.pop(chat_id, None)
@@ -526,8 +534,23 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         )
 
     if stage == "confirmation":
-        yes_values = ("نعم", "أؤكد", "اكد", "تأكيد", "تأكيد الطلب", "yes", "confirm")
-        no_values = ("لا", "إلغاء", "الغاء", "لا أريد", "no", "cancel")
+        yes_values = (
+            "نعم",
+            "أؤكد",
+            "اكد",
+            "تأكيد",
+            "تأكيد الطلب",
+            "yes",
+            "confirm",
+        )
+        no_values = (
+            "لا",
+            "إلغاء",
+            "الغاء",
+            "لا أريد",
+            "no",
+            "cancel",
+        )
 
         if normalized in yes_values:
             saved = save_telegram_order(chat_id, state)
@@ -820,8 +843,6 @@ async def telegram_polling():
                     try:
                         business_id = get_telegram_business_id(chat_id)
 
-                        # إدارة الطلبات خارج الذكاء الاصطناعي
-                        # حتى لا يدّعي البوت تسجيل طلب غير محفوظ.
                         order_reply = handle_telegram_order(
                             chat_id,
                             user_text,
@@ -891,7 +912,6 @@ async def lifespan(app: FastAPI):
             await telegram_task
         except asyncio.CancelledError:
             pass
-
 
 
 app = FastAPI(lifespan=lifespan)
@@ -1092,3 +1112,4 @@ async def home():
         "message": "Customer service bot is running.",
         "supabase_configured": supabase is not None,
     }
+```
