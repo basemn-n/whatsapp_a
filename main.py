@@ -893,7 +893,16 @@ async def lifespan(app: FastAPI):
             pass
 
 
+
 app = FastAPI(lifespan=lifespan)
+
+# ربط لوحة التحكم الإدارية
+from admin_dashboard import create_admin_router
+
+if supabase is not None:
+    app.include_router(create_admin_router(supabase))
+else:
+    logger.error("لوحة التحكم لم تُربط لأن Supabase غير متصل.")
 
 
 # -----------------------------
