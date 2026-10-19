@@ -1,13 +1,16 @@
 
 import os
 import hmac
+import logging
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 security = HTTPBasic()
+logger = logging.getLogger(__name__)
 
 STATUSES = {
     "pending": "قيد المراجعة",
@@ -21,6 +24,23 @@ STATUSES = {
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class ProductCreate(BaseModel):
+    business_id: str
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    price: Decimal = Field(ge=0)
+    currency: str = Field(default="YER", min_length=1, max_length=10)
+    is_available: bool = True
+
+
+class ProductUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    price: Decimal = Field(ge=0)
+    currency: str = Field(default="YER", min_length=1, max_length=10)
+    is_available: bool
 
 
 def create_admin_router(supabase):
@@ -54,145 +74,591 @@ def create_admin_router(supabase):
 
         return True
 
+    def get_business_or_404(business_id):
+        try:
+            result = (
+                supabase.table("businesses")
+                .select("id, name")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            logger.exception("تعذر التحقق من النشاط التجاري")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر التحقق من النشاط التجاري",
+            )
+
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="النشاط التجاري غير موجود",
+            )
+
+        return result.data[0]
+
     @router.get("/admin", response_class=HTMLResponse)
     def dashboard():
-        return HTMLResponse("""
-        <!doctype html>
-        <html lang="ar" dir="rtl">
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>إدارة الطلبات</title>
-        <style>
-        body{font-family:Arial;background:#f2f5fa;margin:20px;color:#182238}
-        h2{margin-bottom:8px}
-        button,select{padding:9px;border-radius:6px;margin:4px}
-        button{cursor:pointer;background:#1559a8;color:white;border:0}
-        .wrap{overflow-x:auto;background:white;padding:12px;border-radius:10px}
-        table{width:100%;border-collapse:collapse;min-width:850px}
-        th,td{padding:11px;border-bottom:1px solid #ddd;text-align:right}
-        th{background:#eaf0f8}
-        #msg{margin:15px 0}
-        </style>
-        <h2>لوحة إدارة طلبات العملاء</h2>
-        <p>عرض الطلبات وتحديث حالتها في قاعدة البيانات.</p>
-        <label>الحالة:</label>
-        <select id="filter">
-          <option value="">كل الطلبات</option>
-          <option value="pending">قيد المراجعة</option>
-          <option value="approved">تمت الموافقة</option>
-          <option value="processing">قيد التجهيز</option>
-          <option value="shipped">قيد التوصيل</option>
-          <option value="delivered">تم التسليم</option>
-          <option value="cancelled">ملغي</option>
-        </select>
-        <button onclick="loadOrders()">تحديث</button>
-        <div id="msg">جارٍ الاتصال...</div>
-        <div class="wrap">
-        <table>
-        <thead><tr>
-        <th>رقم الطلب</th><th>المنتج</th><th>الكمية</th>
-        <th>العميل</th><th>الهاتف</th><th>العنوان</th>
-        <th>الدفع</th><th>الحالة</th><th>حفظ</th>
-        </tr></thead>
-        <tbody id="rows"></tbody>
-        </table></div>
-        <script>
-        const labels={
-          pending:"قيد المراجعة",approved:"تمت الموافقة",
-          processing:"قيد التجهيز",shipped:"قيد التوصيل",
-          delivered:"تم التسليم",cancelled:"ملغي"
-        };
-        let auth="";
-        async function api(url,options={}){
-          const r=await fetch(url,{
-            ...options,
-            headers:{
-              "Authorization":auth,
-              "Content-Type":"application/json"
-            }
+        return HTMLResponse(r"""
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>لوحة إدارة المتجر</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#f2f5fa;margin:0;padding:18px;color:#182238}
+main{max-width:1400px;margin:auto}
+h2{margin-bottom:8px}
+button,select,input,textarea{font:inherit;padding:10px;border:1px solid #cbd5e1;border-radius:7px}
+button{cursor:pointer;background:#1559a8;color:white;border:0}
+button:disabled{opacity:.5;cursor:wait}
+input,textarea{width:100%;background:white}
+label{display:block;margin:10px 0 5px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}
+.tabs button{background:#64748b}
+.tabs button.active{background:#1559a8}
+.panel{background:white;border-radius:12px;padding:16px;margin-bottom:18px}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.toolbar select{max-width:100%;background:white}
+.wrap{overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px}
+table{width:100%;border-collapse:collapse;min-width:850px}
+th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle}
+th{background:#eaf0f8}
+td select{max-width:180px;background:white}
+#msg{margin:12px 0;white-space:pre-wrap}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.full{grid-column:1/-1}
+.form-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.secondary{background:#64748b}
+.danger{background:#b42318}
+.status-on{color:#087443;font-weight:bold}
+.status-off{color:#b42318;font-weight:bold}
+.hidden{display:none!important}
+@media(max-width:650px){body{padding:9px}.grid{grid-template-columns:1fr}.full{grid-column:auto}.panel{padding:11px}}
+</style>
+</head>
+<body>
+<main>
+<h2>لوحة إدارة المتجر</h2>
+<p>إدارة الطلبات والمنتجات المحفوظة في قاعدة البيانات.</p>
+
+<div class="tabs">
+<button id="ordersTab" class="active" onclick="showTab('orders')">الطلبات</button>
+<button id="productsTab" onclick="showTab('products')">المنتجات</button>
+</div>
+
+<div id="msg" role="status">جارٍ الاتصال...</div>
+
+<section id="ordersPanel" class="panel">
+<h3>إدارة طلبات العملاء</h3>
+<div class="toolbar">
+<label for="filter">حالة الطلب:</label>
+<select id="filter">
+<option value="">كل الطلبات</option>
+<option value="pending">قيد المراجعة</option>
+<option value="approved">تمت الموافقة</option>
+<option value="processing">قيد التجهيز</option>
+<option value="shipped">قيد التوصيل</option>
+<option value="delivered">تم التسليم</option>
+<option value="cancelled">ملغي</option>
+</select>
+<button onclick="loadOrders()">تحديث الطلبات</button>
+</div>
+<div class="wrap">
+<table>
+<thead><tr>
+<th>رقم الطلب</th><th>المنتج</th><th>الكمية</th>
+<th>العميل</th><th>الهاتف</th><th>العنوان</th>
+<th>الدفع</th><th>الحالة</th><th>حفظ</th>
+</tr></thead>
+<tbody id="orderRows"></tbody>
+</table>
+</div>
+</section>
+
+<section id="productsPanel" class="panel hidden">
+<h3>إدارة المنتجات</h3>
+<p>اختر النشاط التجاري الذي تريد إدارة منتجاته.</p>
+<div class="toolbar">
+<label for="businessSelect">النشاط التجاري:</label>
+<select id="businessSelect"></select>
+<button onclick="loadProducts()">تحديث المنتجات</button>
+</div>
+
+<div class="panel">
+<h3 id="formTitle">إضافة منتج جديد</h3>
+<form id="productForm">
+<input type="hidden" id="productId">
+<div class="grid">
+<div>
+<label for="productName">اسم المنتج *</label>
+<input id="productName" maxlength="200" required>
+</div>
+<div>
+<label for="productPrice">السعر *</label>
+<input id="productPrice" type="number" min="0" step="0.01" required>
+</div>
+<div>
+<label for="productCurrency">العملة *</label>
+<input id="productCurrency" value="YER" maxlength="10" required>
+</div>
+<div>
+<label for="productAvailable">التوفر</label>
+<select id="productAvailable">
+<option value="true">متاح للطلب</option>
+<option value="false">غير متاح</option>
+</select>
+</div>
+<div class="full">
+<label for="productDescription">وصف المنتج</label>
+<textarea id="productDescription" rows="3" maxlength="2000"></textarea>
+</div>
+</div>
+<div class="form-actions">
+<button id="saveProductBtn" type="submit">حفظ المنتج</button>
+<button type="button" class="secondary" onclick="resetProductForm()">إلغاء التعديل</button>
+</div>
+</form>
+</div>
+
+<div class="wrap">
+<table>
+<thead><tr>
+<th>المنتج</th><th>الوصف</th><th>السعر</th>
+<th>العملة</th><th>التوفر</th><th>إجراء</th>
+</tr></thead>
+<tbody id="productRows"></tbody>
+</table>
+</div>
+</section>
+</main>
+
+<script>
+const labels={
+pending:"قيد المراجعة",
+approved:"تمت الموافقة",
+processing:"قيد التجهيز",
+shipped:"قيد التوصيل",
+delivered:"تم التسليم",
+cancelled:"ملغي"
+};
+
+let auth="";
+let businesses=[];
+let currentProducts=[];
+
+const msg=document.getElementById("msg");
+
+function setMessage(text){msg.textContent=text;}
+
+function cell(value){
+  const td=document.createElement("td");
+  td.textContent=value===null||value===undefined||value===""?"—":String(value);
+  return td;
+}
+
+async function api(url,options={}){
+  const headers={...(options.headers||{}),"Authorization":auth};
+  if(options.body)headers["Content-Type"]="application/json";
+
+  const response=await fetch(url,{...options,headers});
+
+  if(response.status===401){
+    auth="";
+    throw Error("بيانات الدخول غير صحيحة. حدّث الصفحة وسجّل الدخول مجددًا.");
+  }
+
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){
+    throw Error(data.detail||"حدث خطأ أثناء الاتصال بالخادم.");
+  }
+  return data;
+}
+
+async function login(){
+  const username=prompt("اسم المستخدم الإداري");
+  if(username===null)return false;
+  const password=prompt("كلمة المرور الإدارية");
+  if(password===null)return false;
+
+  auth="Basic "+btoa(unescape(encodeURIComponent(username+":"+password)));
+  try{
+    await api("/api/admin/orders");
+    return true;
+  }catch(error){
+    auth="";
+    setMessage(error.message);
+    return false;
+  }
+}
+
+async function ensureLogin(){
+  if(auth)return true;
+  return await login();
+}
+
+function showTab(tab){
+  document.getElementById("ordersPanel").classList.toggle("hidden",tab!=="orders");
+  document.getElementById("productsPanel").classList.toggle("hidden",tab!=="products");
+  document.getElementById("ordersTab").classList.toggle("active",tab==="orders");
+  document.getElementById("productsTab").classList.toggle("active",tab==="products");
+  if(tab==="products")loadBusinesses();
+  else loadOrders();
+}
+
+async function loadOrders(){
+  try{
+    if(!(await ensureLogin()))return;
+    setMessage("جارٍ تحميل الطلبات...");
+    const filter=document.getElementById("filter").value;
+    const data=await api("/api/admin/orders"+(filter?"?status="+encodeURIComponent(filter):""));
+    const rows=document.getElementById("orderRows");
+    rows.replaceChildren();
+
+    for(const order of data.orders||[]){
+      const tr=document.createElement("tr");
+      [
+        order.order_number??order.id,
+        order.product_name,
+        order.quantity,
+        order.customer_name,
+        order.customer_phone,
+        order.customer_address,
+        order.payment_method
+      ].forEach(value=>tr.appendChild(cell(value)));
+
+      const statusCell=document.createElement("td");
+      const select=document.createElement("select");
+      for(const [value,label] of Object.entries(labels)){
+        const option=document.createElement("option");
+        option.value=value;
+        option.textContent=label;
+        option.selected=value===order.status;
+        select.appendChild(option);
+      }
+      statusCell.appendChild(select);
+      tr.appendChild(statusCell);
+
+      const actionCell=document.createElement("td");
+      const button=document.createElement("button");
+      button.textContent="حفظ";
+      button.onclick=async()=>{
+        button.disabled=true;
+        try{
+          await api("/api/admin/orders/"+encodeURIComponent(order.id)+"/status",{
+            method:"PATCH",
+            body:JSON.stringify({status:select.value})
           });
-          if(r.status===401){
-            auth="";
-            throw Error("بيانات الدخول غير صحيحة");
-          }
-          const data=await r.json();
-          if(!r.ok)throw Error(data.detail||"حدث خطأ");
-          return data;
-        }
-        async function login(){
-          const u=prompt("اسم المستخدم الإداري");
-          if(u===null)return false;
-          const p=prompt("كلمة المرور الإدارية");
-          if(p===null)return false;
-          auth="Basic "+btoa(unescape(encodeURIComponent(u+":"+p)));
-          await api("/api/admin/orders");
-          return true;
-        }
-        async function loadOrders(){
-          try{
-            if(!auth && !(await login()))return;
-            document.getElementById("msg").textContent="جارٍ تحميل الطلبات...";
-            const filter=document.getElementById("filter").value;
-            const data=await api("/api/admin/orders"+
-              (filter?"?status="+encodeURIComponent(filter):""));
-            const rows=document.getElementById("rows");
-            rows.replaceChildren();
-            for(const o of data.orders){
-              const tr=document.createElement("tr");
-              const values=[
-                o.order_number??o.id,o.product_name,o.quantity,
-                o.customer_name,o.customer_phone,o.customer_address,
-                o.payment_method
-              ];
-              for(const v of values){
-                const td=document.createElement("td");
-                td.textContent=v??"—";
-                tr.appendChild(td);
-              }
-              const statusCell=document.createElement("td");
-              const select=document.createElement("select");
-              for(const [value,label] of Object.entries(labels)){
-                const option=document.createElement("option");
-                option.value=value;
-                option.textContent=label;
-                option.selected=value===o.status;
-                select.appendChild(option);
-              }
-              statusCell.appendChild(select);
-              tr.appendChild(statusCell);
-              const actionCell=document.createElement("td");
-              const btn=document.createElement("button");
-              btn.textContent="حفظ";
-              btn.onclick=async()=>{
-                btn.disabled=true;
-                try{
-                  await api("/api/admin/orders/"+
-                    encodeURIComponent(o.id)+"/status",{
-                      method:"PATCH",
-                      body:JSON.stringify({status:select.value})
-                    });
-                  document.getElementById("msg").textContent=
-                    "تم حفظ حالة الطلب بنجاح.";
-                  await loadOrders();
-                }catch(e){
-                  document.getElementById("msg").textContent=e.message;
-                }finally{btn.disabled=false;}
-              };
-              actionCell.appendChild(btn);
-              tr.appendChild(actionCell);
-              rows.appendChild(tr);
-            }
-            document.getElementById("msg").textContent=
-              "عدد الطلبات: "+data.orders.length;
-          }catch(e){
-            document.getElementById("msg").textContent=e.message;
-          }
-        }
-        document.getElementById("filter").onchange=loadOrders;
-        loadOrders();
-        </script>
-        </html>
-        """)
+          setMessage("تم حفظ حالة الطلب بنجاح.");
+          await loadOrders();
+        }catch(error){
+          setMessage(error.message);
+        }finally{button.disabled=false;}
+      };
+      actionCell.appendChild(button);
+      tr.appendChild(actionCell);
+      rows.appendChild(tr);
+    }
+    setMessage("عدد الطلبات المعروضة: "+(data.orders||[]).length);
+  }catch(error){setMessage(error.message);}
+}
+
+async function loadBusinesses(){
+  try{
+    if(!(await ensureLogin()))return;
+    setMessage("جارٍ تحميل الأنشطة التجارية...");
+    const data=await api("/api/admin/businesses");
+    businesses=data.businesses||[];
+
+    const select=document.getElementById("businessSelect");
+    const previous=select.value;
+    select.replaceChildren();
+
+    for(const business of businesses){
+      const option=document.createElement("option");
+      option.value=business.id;
+      option.textContent=business.name||business.id;
+      select.appendChild(option);
+    }
+
+    if(previous&&businesses.some(b=>b.id===previous))select.value=previous;
+
+    if(!businesses.length){
+      setMessage("لا توجد أنشطة تجارية متاحة.");
+      document.getElementById("productRows").replaceChildren();
+      return;
+    }
+
+    await loadProducts();
+  }catch(error){setMessage(error.message);}
+}
+
+async function loadProducts(){
+  try{
+    if(!(await ensureLogin()))return;
+    const businessId=document.getElementById("businessSelect").value;
+    if(!businessId){
+      setMessage("اختر نشاطًا تجاريًا أولًا.");
+      return;
+    }
+
+    setMessage("جارٍ تحميل المنتجات...");
+    const data=await api("/api/admin/products?business_id="+encodeURIComponent(businessId));
+    currentProducts=data.products||[];
+    renderProducts();
+    setMessage("عدد المنتجات: "+currentProducts.length);
+  }catch(error){setMessage(error.message);}
+}
+
+function renderProducts(){
+  const rows=document.getElementById("productRows");
+  rows.replaceChildren();
+
+  for(const product of currentProducts){
+    const tr=document.createElement("tr");
+    tr.appendChild(cell(product.name));
+    tr.appendChild(cell(product.description));
+    tr.appendChild(cell(product.price));
+    tr.appendChild(cell(product.currency));
+
+    const availability=cell(product.is_available?"متاح للطلب":"غير متاح");
+    availability.className=product.is_available?"status-on":"status-off";
+    tr.appendChild(availability);
+
+    const action= document.createElement("td");
+    const edit=document.createElement("button");
+    edit.textContent="تعديل";
+    edit.onclick=()=>editProduct(product);
+    action.appendChild(edit);
+    tr.appendChild(action);
+    rows.appendChild(tr);
+  }
+}
+
+function editProduct(product){
+  document.getElementById("productId").value=product.id;
+  document.getElementById("productName").value=product.name||"";
+  document.getElementById("productDescription").value=product.description||"";
+  document.getElementById("productPrice").value=product.price??0;
+  document.getElementById("productCurrency").value=product.currency||"YER";
+  document.getElementById("productAvailable").value=String(Boolean(product.is_available));
+  document.getElementById("formTitle").textContent="تعديل المنتج";
+  document.getElementById("saveProductBtn").textContent="حفظ التعديلات";
+  document.getElementById("productName").focus();
+  setMessage("أنت تعدّل المنتج: "+product.name);
+}
+
+function resetProductForm(){
+  document.getElementById("productForm").reset();
+  document.getElementById("productId").value="";
+  document.getElementById("productCurrency").value="YER";
+  document.getElementById("productAvailable").value="true";
+  document.getElementById("formTitle").textContent="إضافة منتج جديد";
+  document.getElementById("saveProductBtn").textContent="حفظ المنتج";
+}
+
+document.getElementById("productForm").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const button=document.getElementById("saveProductBtn");
+  const productId=document.getElementById("productId").value;
+  const businessId=document.getElementById("businessSelect").value;
+
+  if(!businessId){
+    setMessage("اختر النشاط التجاري أولًا.");
+    return;
+  }
+
+  const payload={
+    business_id:businessId,
+    name:document.getElementById("productName").value.trim(),
+    description:document.getElementById("productDescription").value.trim(),
+    price:document.getElementById("productPrice").value,
+    currency:document.getElementById("productCurrency").value.trim(),
+    is_available:document.getElementById("productAvailable").value==="true"
+  };
+
+  if(!payload.name||!payload.currency||payload.price===""){
+    setMessage("يرجى تعبئة اسم المنتج والسعر والعملة.");
+    return;
+  }
+
+  button.disabled=true;
+  try{
+    if(productId){
+      delete payload.business_id;
+      await api("/api/admin/products/"+encodeURIComponent(productId)+"?business_id="+encodeURIComponent(businessId),{
+        method:"PATCH",body:JSON.stringify(payload)
+      });
+      setMessage("تم تحديث المنتج بنجاح.");
+    }else{
+      await api("/api/admin/products",{
+        method:"POST",body:JSON.stringify(payload)
+      });
+      setMessage("تمت إضافة المنتج بنجاح.");
+    }
+
+    resetProductForm();
+    await loadProducts();
+  }catch(error){
+    setMessage(error.message);
+  }finally{button.disabled=false;}
+});
+
+document.getElementById("businessSelect").addEventListener("change",()=>{
+  resetProductForm();
+  loadProducts();
+});
+document.getElementById("filter").addEventListener("change",loadOrders);
+
+loadOrders();
+</script>
+</body>
+</html>
+""")
+
+    @router.get("/api/admin/businesses")
+    def list_businesses(
+        _admin: bool = Depends(check_admin),
+    ):
+        try:
+            result = (
+                supabase.table("businesses")
+                .select("id, name")
+                .order("name")
+                .limit(500)
+                .execute()
+            )
+            return {"businesses": result.data or []}
+        except Exception:
+            logger.exception("تعذر تحميل الأنشطة التجارية")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر تحميل الأنشطة التجارية",
+            )
+
+    @router.get("/api/admin/products")
+    def list_products(
+        business_id: str,
+        _admin: bool = Depends(check_admin),
+    ):
+        get_business_or_404(business_id)
+        try:
+            result = (
+                supabase.table("products")
+                .select(
+                    "id, business_id, name, description, "
+                    "price, currency, is_available"
+                )
+                .eq("business_id", business_id)
+                .order("name")
+                .limit(1000)
+                .execute()
+            )
+            return {"products": result.data or []}
+        except Exception:
+            logger.exception("تعذر تحميل المنتجات")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر تحميل المنتجات",
+            )
+
+    @router.post("/api/admin/products")
+    def create_product(
+        payload: ProductCreate,
+        _admin: bool = Depends(check_admin),
+    ):
+        get_business_or_404(payload.business_id)
+
+        name = payload.name.strip()
+        currency = payload.currency.strip().upper()
+
+        if not name or not currency:
+            raise HTTPException(
+                status_code=400,
+                detail="اسم المنتج والعملة مطلوبان",
+            )
+
+        try:
+            result = (
+                supabase.table("products")
+                .insert({
+                    "business_id": payload.business_id,
+                    "name": name,
+                    "description": payload.description.strip(),
+                    "price": float(payload.price),
+                    "currency": currency,
+                    "is_available": payload.is_available,
+                })
+                .execute()
+            )
+
+            if not result.data:
+                raise HTTPException(
+                    status_code=500,
+                    detail="لم تُرجع قاعدة البيانات المنتج الجديد",
+                )
+
+            return {"success": True, "product": result.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذرت إضافة المنتج")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذرت إضافة المنتج. تحقق من أعمدة جدول products.",
+            )
+
+    @router.patch("/api/admin/products/{product_id}")
+    def update_product(
+        product_id: str,
+        payload: ProductUpdate,
+        business_id: str,
+        _admin: bool = Depends(check_admin),
+    ):
+        get_business_or_404(business_id)
+
+        name = payload.name.strip()
+        currency = payload.currency.strip().upper()
+
+        if not name or not currency:
+            raise HTTPException(
+                status_code=400,
+                detail="اسم المنتج والعملة مطلوبان",
+            )
+
+        try:
+            result = (
+                supabase.table("products")
+                .update({
+                    "name": name,
+                    "description": payload.description.strip(),
+                    "price": float(payload.price),
+                    "currency": currency,
+                    "is_available": payload.is_available,
+                })
+                .eq("id", product_id)
+                .eq("business_id", business_id)
+                .execute()
+            )
+
+            if not result.data:
+                raise HTTPException(
+                    status_code=404,
+                    detail="المنتج غير موجود في هذا النشاط التجاري",
+                )
+
+            return {"success": True, "product": result.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر تحديث المنتج")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر تحديث المنتج. تحقق من أعمدة جدول products.",
+            )
 
     @router.get("/api/admin/orders")
     def list_orders(
@@ -200,7 +666,10 @@ def create_admin_router(supabase):
         status: str = "",
     ):
         if status and status not in STATUSES:
-            raise HTTPException(400, "حالة غير صحيحة")
+            raise HTTPException(
+                status_code=400,
+                detail="حالة غير صحيحة",
+            )
 
         query = (
             supabase.table("orders")
@@ -216,7 +685,11 @@ def create_admin_router(supabase):
             result = query.execute()
             return {"orders": result.data or []}
         except Exception:
-            raise HTTPException(500, "تعذر تحميل الطلبات")
+            logger.exception("تعذر تحميل الطلبات")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر تحميل الطلبات",
+            )
 
     @router.patch("/api/admin/orders/{order_id}/status")
     def update_status(
@@ -225,7 +698,10 @@ def create_admin_router(supabase):
         _admin: bool = Depends(check_admin),
     ):
         if payload.status not in STATUSES:
-            raise HTTPException(400, "حالة غير مسموح بها")
+            raise HTTPException(
+                status_code=400,
+                detail="حالة غير مسموح بها",
+            )
 
         try:
             result = (
@@ -234,12 +710,21 @@ def create_admin_router(supabase):
                 .eq("id", order_id)
                 .execute()
             )
+
             if not result.data:
-                raise HTTPException(404, "الطلب غير موجود")
+                raise HTTPException(
+                    status_code=404,
+                    detail="الطلب غير موجود",
+                )
+
             return {"success": True, "order": result.data[0]}
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(500, "تعذر تحديث حالة الطلب")
+            logger.exception("تعذر تحديث حالة الطلب")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر تحديث حالة الطلب",
+            )
 
     return router
