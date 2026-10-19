@@ -896,8 +896,9 @@ else:
 # -----------------------------
 
 def download_telegram_photo(file_id: str):
-    """Download a Telegram photo using the bot token, with a size limit."""
+    """Download and validate a Telegram photo, with a 10 MB processing limit."""
     if not TELEGRAM_BOT_TOKEN or not file_id:
+        logger.warning("Telegram photo download skipped: token or file_id is missing.")
         return None
 
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -911,7 +912,10 @@ def download_telegram_photo(file_id: str):
         metadata = metadata_response.json()
 
         if not metadata.get("ok"):
-            logger.warning("Telegram getFile returned an unsuccessful result.")
+            logger.warning(
+                "Telegram getFile failed: %s",
+                metadata.get("description", "unknown Telegram API error"),
+            )
             return None
 
         file_path = (metadata.get("result") or {}).get("file_path")
@@ -920,15 +924,13 @@ def download_telegram_photo(file_id: str):
             return None
 
         file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+        image_data = bytearray()
+        max_bytes = 10 * 1024 * 1024
+
         with requests.get(file_url, timeout=30, stream=True) as image_response:
             image_response.raise_for_status()
-            content_type = image_response.headers.get("Content-Type", "").lower()
-            if content_type and not content_type.startswith("image/"):
-                logger.warning("Telegram photo download returned non-image content.")
-                return None
-
-            image_data = bytearray()
-            max_bytes = 10 * 1024 * 1024
+            # Do not reject solely by Content-Type: Telegram/CDN may return
+            # application/octet-stream even when the bytes are a valid photo.
             for chunk in image_response.iter_content(chunk_size=64 * 1024):
                 if not chunk:
                     continue
@@ -937,10 +939,40 @@ def download_telegram_photo(file_id: str):
                     logger.warning("Telegram photo exceeded the 10 MB processing limit.")
                     return None
 
-        return bytes(image_data) if image_data else None
+        data = bytes(image_data)
+        is_jpeg = data.startswith(b"\xff\xd8\xff")
+        is_png = data.startswith(b"\x89PNG\r\n\x1a\n")
+        is_webp = len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+
+        if not data or not (is_jpeg or is_png or is_webp):
+            logger.warning(
+                "Telegram file was downloaded but does not look like a supported image "
+                "(bytes=%s, content_type=%s).",
+                len(data),
+                image_response.headers.get("Content-Type", "unknown"),
+            )
+            return None
+
+        # Telegram's photo[] entries are normally JPEGs. Convert other accepted
+        # image types to JPEG before sending to the model, if Pillow is available.
+        if not is_jpeg:
+            try:
+                from io import BytesIO
+                from PIL import Image
+
+                with Image.open(BytesIO(data)) as image:
+                    output = BytesIO()
+                    image.convert("RGB").save(output, format="JPEG", quality=90)
+                    data = output.getvalue()
+            except Exception:
+                logger.exception("Could not normalize Telegram photo to JPEG.")
+                return None
+
+        logger.info("Telegram photo downloaded successfully (%s bytes).", len(data))
+        return data
 
     except requests.RequestException:
-        logger.exception("Failed to download Telegram photo.")
+        logger.exception("Telegram photo HTTP request failed.")
         return None
     except (ValueError, TypeError):
         logger.exception("Invalid Telegram file metadata.")
