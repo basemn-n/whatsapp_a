@@ -22,7 +22,6 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Supabase: المفتاح السري يُحفظ في Render فقط.
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
@@ -31,6 +30,7 @@ supabase = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
         from supabase import create_client
+
         supabase = create_client(
             SUPABASE_URL,
             SUPABASE_SERVICE_ROLE_KEY,
@@ -50,9 +50,7 @@ else:
 # -----------------------------
 
 def get_business_context(business_id: str):
-    """جمع معلومات نشاط واحد من قاعدة البيانات."""
-
-    if not supabase:
+    if not supabase or not business_id:
         return None
 
     try:
@@ -129,6 +127,7 @@ def get_business_context(business_id: str):
                     if product.get("is_available")
                     else "غير متاح"
                 )
+
                 lines.append(
                     f"- {product.get('name', 'منتج')}: "
                     f"{product.get('description') or ''}; "
@@ -145,8 +144,6 @@ def get_business_context(business_id: str):
 
 
 def get_telegram_business_id(chat_id: int):
-    """استخراج النشاط المرتبط بآخر أمر /start صالح."""
-
     if not supabase:
         return None
 
@@ -171,8 +168,6 @@ def get_telegram_business_id(chat_id: int):
 
 
 def save_telegram_business(chat_id: int, business_id: str):
-    """حفظ ارتباط محادثة Telegram بنشاط موجود."""
-
     if not supabase:
         return False
 
@@ -203,8 +198,6 @@ def save_telegram_business(chat_id: int, business_id: str):
 
 
 def get_whatsapp_business_context():
-    """تحديد النشاط المرتبط برقم WhatsApp المُعدّ في Render."""
-
     if not supabase or not PHONE_NUMBER_ID:
         return None
 
@@ -261,9 +254,13 @@ def send_whatsapp_message(to_phone: str, message_text: str):
 
     try:
         response = requests.post(
-            url, json=data, headers=headers, timeout=20
+            url,
+            json=data,
+            headers=headers,
+            timeout=20,
         )
         response.raise_for_status()
+
     except requests.RequestException:
         logger.exception("فشل إرسال رسالة WhatsApp.")
 
@@ -272,23 +269,33 @@ def download_whatsapp_media(media_id: str):
     if not WHATSAPP_TOKEN or not media_id:
         return None
 
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-    endpoint = f"https://graph.facebook.com/v19.0/{media_id}"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}"
+    }
+    endpoint = (
+        f"https://graph.facebook.com/v19.0/{media_id}"
+    )
 
     try:
         response = requests.get(
-            endpoint, headers=headers, timeout=20
+            endpoint,
+            headers=headers,
+            timeout=20,
         )
         response.raise_for_status()
+
         media_url = response.json().get("url")
 
         if not media_url:
             return None
 
         media_response = requests.get(
-            media_url, headers=headers, timeout=30
+            media_url,
+            headers=headers,
+            timeout=30,
         )
         media_response.raise_for_status()
+
         return media_response.content
 
     except requests.RequestException:
@@ -307,28 +314,34 @@ def telegram_api(method: str, payload=None, timeout=20):
         )
 
     url = (
-        f"https://api.telegram.org/bot"
+        "https://api.telegram.org/bot"
         f"{TELEGRAM_BOT_TOKEN}/{method}"
     )
 
-  response = requests.post(
-    url, json=payload or {}, timeout=timeout
-)
-
-if not response.ok:
-    logger.error(
-        "Telegram API error for %s: HTTP %s - %s",
-        method,
-        response.status_code,
-        response.text[:1000],
+    response = requests.post(
+        url,
+        json=payload or {},
+        timeout=timeout,
     )
 
-response.raise_for_status()
+    if not response.ok:
+        # نسجل تفاصيل الخطأ للمساعدة في تشخيصه.
+        # لا نسجل عنوان الطلب لأنه يحتوي على رمز البوت.
+        logger.error(
+            "Telegram API error for %s: HTTP %s - %s",
+            method,
+            response.status_code,
+            response.text[:1000],
+        )
+
+    response.raise_for_status()
 
     result = response.json()
 
     if not result.get("ok"):
-        raise RuntimeError("Telegram API returned an error.")
+        raise RuntimeError(
+            "Telegram API returned an error."
+        )
 
     return result.get("result")
 
@@ -350,20 +363,26 @@ async def send_telegram_message(chat_id: int, text: str):
 
 async def telegram_polling():
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("Telegram غير مفعّل: الرمز غير موجود.")
+        logger.error(
+            "Telegram غير مفعّل: الرمز غير موجود."
+        )
         return
 
     offset = 0
+
     logger.info("بدأ استقبال رسائل Telegram.")
 
     try:
         bot_info = await asyncio.to_thread(
-            telegram_api, "getMe"
+            telegram_api,
+            "getMe",
         )
+
         logger.info(
             "Telegram bot connected: @%s",
             bot_info.get("username", "unknown"),
         )
+
     except Exception:
         logger.exception("تعذر الاتصال بـ Telegram.")
         return
@@ -387,25 +406,37 @@ async def telegram_polling():
                 message = update.get("message", {})
                 chat = message.get("chat", {})
                 chat_id = chat.get("id")
-                user_text = message.get("text", "").strip()
+                user_text = (
+                    message.get("text") or ""
+                ).strip()
 
                 if not chat_id or not user_text:
                     continue
 
                 if user_text.startswith("/start"):
                     parts = user_text.split(maxsplit=1)
-                    payload = parts[1].strip() if len(parts) > 1 else ""
+                    payload = (
+                        parts[1].strip()
+                        if len(parts) > 1
+                        else ""
+                    )
 
                     business_id = None
 
                     if payload:
                         try:
-                            business_id = str(uuid.UUID(payload))
+                            business_id = str(
+                                uuid.UUID(payload)
+                            )
                         except ValueError:
                             business_id = None
 
-                    if business_id and save_telegram_business(
-                        chat_id, business_id
+                    if (
+                        business_id
+                        and save_telegram_business(
+                            chat_id,
+                            business_id,
+                        )
                     ):
                         reply = (
                             "مرحبًا بك! 👋\n"
@@ -425,10 +456,14 @@ async def telegram_polling():
 
                 else:
                     try:
-                        business_id = get_telegram_business_id(chat_id)
+                        business_id = (
+                            get_telegram_business_id(chat_id)
+                        )
+
                         context = (
                             get_business_context(business_id)
-                            if business_id else None
+                            if business_id
+                            else None
                         )
 
                         reply = await asyncio.to_thread(
@@ -437,24 +472,38 @@ async def telegram_polling():
                             user_text,
                             None,
                             context,
-                            f"telegram_{chat_id}_{business_id or 'default'}",
+                            (
+                                f"telegram_{chat_id}_"
+                                f"{business_id or 'default'}"
+                            ),
                         )
+
                     except Exception:
-                        logger.exception("فشل توليد رد Telegram.")
+                        logger.exception(
+                            "فشل توليد رد Telegram."
+                        )
                         reply = (
                             "عذرًا، حدث خطأ مؤقت. "
                             "يرجى المحاولة مرة أخرى."
                         )
 
                 try:
-                    await send_telegram_message(chat_id, reply)
+                    await send_telegram_message(
+                        chat_id,
+                        reply,
+                    )
                 except Exception:
-                    logger.exception("فشل إرسال رد Telegram.")
+                    logger.exception(
+                        "فشل إرسال رد Telegram."
+                    )
 
         except asyncio.CancelledError:
             raise
+
         except Exception:
-            logger.exception("حدث خطأ في استقبال Telegram.")
+            logger.exception(
+                "حدث خطأ في استقبال Telegram."
+            )
             await asyncio.sleep(5)
 
 
@@ -464,13 +513,16 @@ async def telegram_polling():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    telegram_task = asyncio.create_task(telegram_polling())
+    telegram_task = asyncio.create_task(
+        telegram_polling()
+    )
     app.state.telegram_task = telegram_task
 
     try:
         yield
     finally:
         telegram_task.cancel()
+
         try:
             await telegram_task
         except asyncio.CancelledError:
@@ -497,7 +549,10 @@ async def verify_webhook(request: Request):
             media_type="text/plain",
         )
 
-    raise HTTPException(status_code=403, detail="Verification failed")
+    raise HTTPException(
+        status_code=403,
+        detail="Verification failed",
+    )
 
 
 @app.post("/webhook")
@@ -505,10 +560,15 @@ async def receive_webhook(request: Request):
     try:
         body = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON body",
+        )
 
     try:
-        context = await asyncio.to_thread(get_whatsapp_business_context)
+        context = await asyncio.to_thread(
+            get_whatsapp_business_context
+        )
 
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
@@ -525,13 +585,20 @@ async def receive_webhook(request: Request):
                     image_bytes = None
 
                     if msg_type == "text":
-                        user_text = message.get("text", {}).get("body", "")
+                        user_text = (
+                            message.get("text", {}).get(
+                                "body", ""
+                            )
+                        )
 
                     elif msg_type == "image":
                         image_data = message.get("image", {})
+
                         user_text = image_data.get(
-                            "caption", "يرجى وصف الصورة."
+                            "caption",
+                            "يرجى وصف الصورة.",
                         )
+
                         image_bytes = await asyncio.to_thread(
                             download_whatsapp_media,
                             image_data.get("id"),
@@ -546,7 +613,10 @@ async def receive_webhook(request: Request):
                             continue
 
                     elif msg_type in ("audio", "voice"):
-                        audio_data = message.get(msg_type, {})
+                        audio_data = message.get(
+                            msg_type, {}
+                        )
+
                         audio_bytes = await asyncio.to_thread(
                             download_whatsapp_media,
                             audio_data.get("id"),
@@ -556,21 +626,31 @@ async def receive_webhook(request: Request):
                             continue
 
                         temp_path = None
+
                         try:
                             with tempfile.NamedTemporaryFile(
-                                delete=False, suffix=".ogg"
+                                delete=False,
+                                suffix=".ogg",
                             ) as temp_audio:
                                 temp_audio.write(audio_bytes)
                                 temp_path = temp_audio.name
 
                             user_text = await asyncio.to_thread(
-                                transcribe_audio, temp_path
+                                transcribe_audio,
+                                temp_path,
                             )
+
                         except Exception:
-                            logger.exception("فشل تحويل الرسالة الصوتية.")
+                            logger.exception(
+                                "فشل تحويل الرسالة الصوتية."
+                            )
                             continue
+
                         finally:
-                            if temp_path and os.path.exists(temp_path):
+                            if (
+                                temp_path
+                                and os.path.exists(temp_path)
+                            ):
                                 os.remove(temp_path)
 
                     else:
@@ -585,7 +665,10 @@ async def receive_webhook(request: Request):
                         user_text,
                         image_bytes,
                         context,
-                        f"whatsapp_{PHONE_NUMBER_ID or 'default'}_{from_number}",
+                        (
+                            f"whatsapp_{PHONE_NUMBER_ID or 'default'}_"
+                            f"{from_number}"
+                        ),
                     )
 
                     await asyncio.to_thread(
@@ -595,7 +678,9 @@ async def receive_webhook(request: Request):
                     )
 
     except Exception:
-        logger.exception("حدث خطأ أثناء معالجة Webhook واتساب.")
+        logger.exception(
+            "حدث خطأ أثناء معالجة Webhook واتساب."
+        )
 
     return {"status": "ok"}
 
@@ -616,13 +701,23 @@ async def test_ai(request: TestAIRequest):
             "test-session",
             request.message,
         )
-        return {"success": True, "reply": reply}
+
+        return {
+            "success": True,
+            "reply": reply,
+        }
 
     except Exception:
-        logger.exception("فشل اختبار الذكاء الاصطناعي.")
+        logger.exception(
+            "فشل اختبار الذكاء الاصطناعي."
+        )
+
         raise HTTPException(
             status_code=500,
-            detail="فشل اختبار الذكاء الاصطناعي. راجع سجلات Render.",
+            detail=(
+                "فشل اختبار الذكاء الاصطناعي. "
+                "راجع سجلات Render."
+            ),
         )
 
 
