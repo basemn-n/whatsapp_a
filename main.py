@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import logging
@@ -307,6 +308,7 @@ def download_whatsapp_media(media_id: str):
 # Telegram functions
 # -----------------------------
 
+
 def telegram_api(method: str, payload=None, timeout=20):
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError(
@@ -324,26 +326,31 @@ def telegram_api(method: str, payload=None, timeout=20):
         timeout=timeout,
     )
 
-    if not response.ok:
-        # نسجل تفاصيل الخطأ للمساعدة في تشخيصه.
-        # لا نسجل عنوان الطلب لأنه يحتوي على رمز البوت.
-        logger.error(
-            "Telegram API error for %s: HTTP %s - %s",
-            method,
-            response.status_code,
-            response.text[:1000],
+    try:
+        result = response.json()
+    except ValueError:
+        result = {}
+
+    if not response.ok or not result.get("ok"):
+        description = result.get(
+            "description",
+            response.text[:1000] or "Unknown Telegram error",
         )
 
-    response.raise_for_status()
+        logger.error(
+            "Telegram API error: method=%s, HTTP=%s, description=%s",
+            method,
+            response.status_code,
+            description,
+        )
 
-    result = response.json()
-
-    if not result.get("ok"):
         raise RuntimeError(
-            "Telegram API returned an error."
+            f"Telegram API error for {method}: "
+            f"HTTP {response.status_code}: {description}"
         )
 
     return result.get("result")
+
 
 
 async def send_telegram_message(chat_id: int, text: str):
