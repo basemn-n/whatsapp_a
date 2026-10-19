@@ -42,10 +42,14 @@ class ProductUpdate(BaseModel):
     currency: str = Field(default="YER", min_length=1, max_length=10)
     is_available: bool
 
+
 def send_telegram_status_notification(chat_id, order):
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     if not token or not chat_id:
+        logger.warning(
+            "Telegram notification skipped: token or chat_id is missing."
+        )
         return False
 
     status = order.get("status", "")
@@ -74,15 +78,21 @@ def send_telegram_status_notification(chat_id, order):
         response.raise_for_status()
 
         result = response.json()
+
         if not result.get("ok"):
             logger.warning("Telegram notification was not accepted.")
             return False
 
+        logger.info(
+            "Telegram order status notification sent successfully."
+        )
         return True
 
     except Exception:
         logger.exception("Failed to send Telegram order notification.")
         return False
+
+
 def create_admin_router(supabase):
     router = APIRouter()
 
@@ -178,7 +188,6 @@ td select{max-width:180px;background:white}
 .status-on{color:#087443;font-weight:bold}
 .status-off{color:#b42318;font-weight:bold}
 .hidden{display:none!important}
-
 .stats{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
@@ -488,7 +497,6 @@ async function loadOrders() {
 
     setMessage("جارٍ تحميل الطلبات...");
 
-    // نحمل الطلبات مرة واحدة حتى تبقى الإحصائيات مستقلة عن التصفية.
     const data = await api("/api/admin/orders");
     allOrders = Array.isArray(data.orders) ? data.orders : [];
 
@@ -589,7 +597,7 @@ function renderOrders() {
       button.disabled = true;
 
       try {
-        await api(
+        const result = await api(
           "/api/admin/orders/" +
           encodeURIComponent(order.id) +
           "/status",
@@ -601,7 +609,16 @@ function renderOrders() {
           }
         );
 
-        setMessage("تم حفظ حالة الطلب بنجاح.");
+        if (result.notification_sent) {
+          setMessage(
+            "تم حفظ حالة الطلب وإرسال إشعار Telegram للعميل."
+          );
+        } else {
+          setMessage(
+            "تم حفظ حالة الطلب. لم يُؤكَّد إرسال إشعار Telegram؛ تحقق من ربط محادثة العميل وإعدادات البوت."
+          );
+        }
+
         await loadOrders();
       } catch (error) {
         setMessage(error.message);
@@ -1025,7 +1042,7 @@ loadOrders();
                 detail="تعذر تحميل الطلبات",
             )
 
-       @router.patch("/api/admin/orders/{order_id}/status")
+    @router.patch("/api/admin/orders/{order_id}/status")
     def update_status(
         order_id: str,
         payload: StatusUpdate,
@@ -1038,7 +1055,7 @@ loadOrders();
             )
 
         try:
-            # قراءة الطلب وحالته السابقة ووجهة إشعار تيليجرام.
+            # قراءة الطلب وحالته السابقة ووجهة إشعار Telegram.
             existing_result = (
                 supabase.table("orders")
                 .select(
@@ -1096,6 +1113,10 @@ loadOrders();
             logger.exception("تعذر تحديث حالة الطلب")
             raise HTTPException(
                 status_code=500,
-                detail="تعذر تحديث حالة الطلب. تحقق من إعدادات قاعدة البيانات.",
+                detail=(
+                    "تعذر تحديث حالة الطلب. تحقق من إعدادات قاعدة البيانات "
+                    "ووجود عمود telegram_chat_id في جدول orders."
+                ),
             )
-                return router
+
+    return router
