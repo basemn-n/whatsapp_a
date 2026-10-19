@@ -311,10 +311,19 @@ def telegram_api(method: str, payload=None, timeout=20):
         f"{TELEGRAM_BOT_TOKEN}/{method}"
     )
 
-    response = requests.post(
-        url, json=payload or {}, timeout=timeout
+  response = requests.post(
+    url, json=payload or {}, timeout=timeout
+)
+
+if not response.ok:
+    logger.error(
+        "Telegram API error for %s: HTTP %s - %s",
+        method,
+        response.status_code,
+        response.text[:1000],
     )
-    response.raise_for_status()
+
+response.raise_for_status()
 
     result = response.json()
 
