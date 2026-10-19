@@ -197,6 +197,71 @@ def save_telegram_business(chat_id: int, business_id: str):
         logger.exception("تعذر حفظ ارتباط Telegram بالنشاط.")
         return False
 
+# -----------------------------
+# Telegram order management
+# -----------------------------
+
+# بيانات الطلبات التي لم يكتمل جمعها بعد.
+# ملاحظة: تبقى في الذاكرة حتى إعادة تشغيل الخدمة.
+pending_telegram_orders = {}
+
+
+def save_telegram_order(chat_id: int, order_data: dict):
+    """حفظ طلب مكتمل في قاعدة بيانات Supabase."""
+
+    if not supabase:
+        logger.error("لا يمكن تسجيل الطلب: Supabase غير متصل.")
+        return None
+
+    business_id = get_telegram_business_id(chat_id)
+
+    if not business_id:
+        logger.warning(
+            "لا يمكن تسجيل الطلب: المحادثة غير مرتبطة بنشاط تجاري."
+        )
+        return None
+
+    required_fields = [
+        "customer_name",
+        "customer_phone",
+        "customer_address",
+        "payment_method",
+        "product_name",
+    ]
+
+    if any(
+        not str(order_data.get(field, "")).strip()
+        for field in required_fields
+    ):
+        return None
+
+    try:
+        result = (
+            supabase.table("orders")
+            .insert({
+                "business_id": business_id,
+                "customer_name": order_data["customer_name"].strip(),
+                "customer_phone": order_data["customer_phone"].strip(),
+                "customer_address": order_data["customer_address"].strip(),
+                "payment_method": order_data["payment_method"].strip(),
+                "product_name": order_data["product_name"].strip(),
+                "quantity": int(order_data.get("quantity", 1)),
+                "status": "pending",
+            })
+            .select("id, order_number, status")
+            .execute()
+        )
+
+        if not result.data:
+            logger.error("لم تُرجع قاعدة البيانات سجل الطلب.")
+            return None
+
+        return result.data[0]
+
+    except Exception:
+        logger.exception("فشل حفظ طلب Telegram في Supabase.")
+        return None
+
 
 def get_whatsapp_business_context():
     if not supabase or not PHONE_NUMBER_ID:
