@@ -2,6 +2,8 @@
 import os
 import re
 import asyncio
+import hashlib
+import hmac
 import logging
 import requests
 import tempfile
@@ -756,142 +758,37 @@ async def send_telegram_message(chat_id: int, text: str):
         )
 
 
-async def telegram_polling():
+async def configure_telegram_webhook():
+    """Configure Telegram webhook on Render to avoid competing getUpdates pollers."""
     if not TELEGRAM_BOT_TOKEN:
-        logger.error("Telegram غير مفعّل: الرمز غير موجود.")
+        logger.warning("Telegram webhook skipped: token is not configured.")
         return
 
-    offset = 0
-    logger.info("بدأ استقبال رسائل Telegram.")
+    base_url = os.getenv(
+        "RENDER_EXTERNAL_URL",
+        "https://whatsapp-a-avp6.onrender.com",
+    ).rstrip("/")
+    webhook_url = f"{base_url}/telegram/webhook"
+    secret_token = hashlib.sha256(
+        TELEGRAM_BOT_TOKEN.encode("utf-8")
+    ).hexdigest()[:48]
 
     try:
-        bot_info = await asyncio.to_thread(
+        await asyncio.to_thread(
             telegram_api,
-            "getMe",
+            "setWebhook",
+            {
+                "url": webhook_url,
+                "secret_token": secret_token,
+                "allowed_updates": ["message"],
+                "drop_pending_updates": False,
+            },
+            20,
         )
-
-        logger.info(
-            "Telegram bot connected: @%s",
-            bot_info.get("username", "unknown"),
-        )
-
+        logger.info("Telegram webhook configured at %s", webhook_url)
     except Exception:
-        logger.exception("تعذر الاتصال بـ Telegram.")
-        return
-
-    while True:
-        try:
-            updates = await asyncio.to_thread(
-                telegram_api,
-                "getUpdates",
-                {
-                    "offset": offset,
-                    "timeout": 25,
-                    "allowed_updates": ["message"],
-                },
-                35,
-            )
-
-            for update in updates or []:
-                offset = update["update_id"] + 1
-
-                message = update.get("message", {})
-                chat = message.get("chat", {})
-                chat_id = chat.get("id")
-
-                user_text = (
-                    message.get("text") or ""
-                ).strip()
-
-                if not chat_id or not user_text:
-                    continue
-
-                if user_text.startswith("/start"):
-                    parts = user_text.split(maxsplit=1)
-                    payload = parts[1].strip() if len(parts) > 1 else ""
-
-                    business_id = None
-
-                    if payload:
-                        try:
-                            business_id = str(uuid.UUID(payload))
-                        except ValueError:
-                            business_id = None
-
-                    if (
-                        business_id
-                        and save_telegram_business(chat_id, business_id)
-                    ):
-                        reply = (
-                            "مرحبًا بك! 👋\n"
-                            "تم ربط هذه المحادثة بالنشاط التجاري.\n"
-                            "أرسل سؤالك وسأساعدك."
-                        )
-                    else:
-                        reply = (
-                            "مرحبًا بك! 👋\n"
-                            "أنا مساعد خدمة العملاء الذكي.\n"
-                            "يمكنك إرسال سؤالك في أي وقت."
-                        )
-
-                elif user_text.startswith("/cancel"):
-                    with order_lock:
-                        pending_telegram_orders.pop(chat_id, None)
-                    reply = "تم إلغاء الطلب الجاري."
-
-                else:
-                    try:
-                        business_id = get_telegram_business_id(chat_id)
-
-                        order_reply = handle_telegram_order(
-                            chat_id,
-                            user_text,
-                            business_id,
-                        )
-
-                        if order_reply is not None:
-                            reply = order_reply
-                        elif user_text.startswith("/"):
-                            reply = "الأوامر المتاحة: /start و /cancel"
-                        else:
-                            context = (
-                                get_business_context(business_id)
-                                if business_id
-                                else None
-                            )
-
-                            reply = await asyncio.to_thread(
-                                generate_ai_response,
-                                f"telegram_{chat_id}",
-                                user_text,
-                                None,
-                                context,
-                                (
-                                    f"telegram_{chat_id}_"
-                                    f"{business_id or 'default'}"
-                                ),
-                            )
-
-                    except Exception:
-                        logger.exception(
-                            "فشل معالجة رسالة Telegram."
-                        )
-                        reply = (
-                            "عذرًا، حدث خطأ مؤقت. "
-                            "يرجى المحاولة مرة أخرى."
-                        )
-
-                try:
-                    await send_telegram_message(chat_id, reply)
-                except Exception:
-                    logger.exception("فشل إرسال رد Telegram.")
-
-        except asyncio.CancelledError:
-            raise
-
-        except Exception:
-            logger.exception("حدث خطأ في استقبال Telegram.")
-            await asyncio.sleep(5)
+        # Keep the API online while logging setup errors for diagnosis.
+        logger.exception("Failed to configure Telegram webhook.")
 
 
 # -----------------------------
@@ -900,18 +797,12 @@ async def telegram_polling():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    telegram_task = asyncio.create_task(telegram_polling())
-    app.state.telegram_task = telegram_task
-
+    # Use webhook delivery instead of polling to prevent Telegram 409 conflicts.
+    await configure_telegram_webhook()
     try:
         yield
     finally:
-        telegram_task.cancel()
-
-        try:
-            await telegram_task
-        except asyncio.CancelledError:
-            pass
+        logger.info("Application shutdown complete.")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -923,6 +814,114 @@ if supabase is not None:
     app.include_router(create_admin_router(supabase))
 else:
     logger.error("لوحة التحكم لم تُربط لأن Supabase غير متصل.")
+
+
+# -----------------------------
+# Telegram webhook
+# -----------------------------
+
+async def process_telegram_update(update: dict):
+    message = update.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    user_text = (message.get("text") or "").strip()
+
+    if not chat_id or not user_text:
+        return
+
+    if user_text.startswith("/start"):
+        parts = user_text.split(maxsplit=1)
+        payload = parts[1].strip() if len(parts) > 1 else ""
+        business_id = None
+
+        if payload:
+            try:
+                business_id = str(uuid.UUID(payload))
+            except ValueError:
+                business_id = None
+
+        linked = False
+        if business_id:
+            linked = await asyncio.to_thread(
+                save_telegram_business, chat_id, business_id
+            )
+
+        if linked:
+            reply = (
+                "مرحبًا بك! 👋\n"
+                "تم ربط هذه المحادثة بالنشاط التجاري.\n"
+                "أرسل سؤالك وسأساعدك."
+            )
+        else:
+            reply = (
+                "مرحبًا بك! 👋\n"
+                "أنا مساعد خدمة العملاء الذكي.\n"
+                "يمكنك إرسال سؤالك في أي وقت."
+            )
+
+    elif user_text.startswith("/cancel"):
+        with order_lock:
+            pending_telegram_orders.pop(chat_id, None)
+        reply = "تم إلغاء الطلب الجاري."
+
+    else:
+        try:
+            business_id = await asyncio.to_thread(
+                get_telegram_business_id, chat_id
+            )
+            order_reply = await asyncio.to_thread(
+                handle_telegram_order, chat_id, user_text, business_id
+            )
+
+            if order_reply is not None:
+                reply = order_reply
+            elif user_text.startswith("/"):
+                reply = "الأوامر المتاحة: /start و /cancel"
+            else:
+                context = (
+                    await asyncio.to_thread(get_business_context, business_id)
+                    if business_id else None
+                )
+                reply = await asyncio.to_thread(
+                    generate_ai_response,
+                    f"telegram_{chat_id}",
+                    user_text,
+                    None,
+                    context,
+                    f"telegram_{chat_id}_{business_id or 'default'}",
+                )
+        except Exception:
+            logger.exception("فشل معالجة رسالة Telegram.")
+            reply = "عذرًا، حدث خطأ مؤقت. يرجى المحاولة مرة أخرى."
+
+    await send_telegram_message(chat_id, reply)
+
+
+@app.post("/telegram/webhook")
+async def receive_telegram_webhook(request: Request):
+    if not TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=503, detail="Telegram is not configured.")
+
+    expected_secret = hashlib.sha256(
+        TELEGRAM_BOT_TOKEN.encode("utf-8")
+    ).hexdigest()[:48]
+    supplied_secret = request.headers.get(
+        "X-Telegram-Bot-Api-Secret-Token", ""
+    )
+    if not hmac.compare_digest(supplied_secret, expected_secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret.")
+
+    try:
+        update = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body.")
+
+    try:
+        await process_telegram_update(update)
+    except Exception:
+        logger.exception("Failed to process Telegram webhook update.")
+
+    return {"ok": True}
 
 
 # -----------------------------
