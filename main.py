@@ -247,8 +247,7 @@ def load_pending_telegram_order(chat_id: int):
             return None
         except Exception:
             logger.warning(
-                "تعذر تحميل حالة الطلب من Supabase؛ ستُستخدم الذاكرة المحلية. "
-                "تأكد من إنشاء جدول telegram_pending_orders."
+                "تعذر تحميل حالة الطلب من Supabase؛ ستُستخدم الذاكرة المحلية. "                "تأكد من إنشاء جدول telegram_pending_orders."
             )
 
     with order_lock:
@@ -497,8 +496,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         if not any(intent in text for intent in order_intents):
             return None
 
-        if not business_id:
-            return (
+        if not business_id:            return (
                 "لا يمكنني تسجيل الطلب بعد لأن هذه المحادثة غير مرتبطة "
                 "بنشاط تجاري. افتح رابط البوت الخاص بالنشاط ثم حاول مجددًا."
             )
@@ -747,8 +745,7 @@ def download_whatsapp_media(media_id: str):
     try:
         response = requests.get(
             endpoint,
-            headers=headers,
-            timeout=20,
+            headers=headers,            timeout=20,
         )
         response.raise_for_status()
 
@@ -895,13 +892,71 @@ else:
 # Telegram webhook
 # -----------------------------
 
+def download_telegram_photo(file_id: str):
+    """Download a Telegram photo securely using the bot token."""
+    if not TELEGRAM_BOT_TOKEN or not file_id:
+        return None
+
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    try:
+        metadata_response = requests.get(
+            f"{api_url}/getFile",
+            params={"file_id": file_id},
+            timeout=20,
+        )
+        metadata_response.raise_for_status()
+        metadata = metadata_response.json()
+
+        if not metadata.get("ok"):
+            logger.warning("Telegram getFile returned an unsuccessful result.")
+            return None
+
+        file_path = (metadata.get("result") or {}).get("file_path")
+        if not file_path:
+            logger.warning("Telegram getFile response did not include file_path.")
+            return None
+
+        download_url = f"{api_url.replace('/bot' + TELEGRAM_BOT_TOKEN, '/file/bot' + TELEGRAM_BOT_TOKEN)}/{file_path}"
+        image_response = requests.get(download_url, timeout=30, stream=True)
+        image_response.raise_for_status()
+
+        content_type = image_response.headers.get("Content-Type", "").lower()
+        if content_type and not content_type.startswith("image/"):
+            logger.warning("Telegram photo download returned non-image content.")
+            return None
+
+        image_data = bytearray()
+        max_bytes = 10 * 1024 * 1024
+        for chunk in image_response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            image_data.extend(chunk)
+            if len(image_data) > max_bytes:
+                logger.warning("Telegram photo exceeded the 10 MB processing limit.")
+                return None
+
+        if not image_data:
+            return None
+
+        return bytes(image_data)
+
+    except requests.RequestException:
+        logger.exception("Failed to download Telegram photo.")
+        return None
+    except (ValueError, TypeError):
+        logger.exception("Invalid Telegram file metadata.")
+        return None
+
+
 async def process_telegram_update(update: dict):
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     user_text = (message.get("text") or "").strip()
+    caption = (message.get("caption") or "").strip()
+    photos = message.get("photo") or []
 
-    if not chat_id or not user_text:
+    if not chat_id or (not user_text and not photos):
         return
 
     if user_text.startswith("/start"):
@@ -923,20 +978,61 @@ async def process_telegram_update(update: dict):
 
         if linked:
             reply = (
-                "مرحبًا بك! 👋\n"
-                "تم ربط هذه المحادثة بالنشاط التجاري.\n"
-                "أرسل سؤالك وسأساعدك."
+                "مرحبًا بك! 👋\\n"
+                "تم ربط هذه المحادثة بالنشاط التجاري.\\n"
+                "أرسل سؤالك أو صورة وسأساعدك."
             )
         else:
             reply = (
-                "مرحبًا بك! 👋\n"
-                "أنا مساعد خدمة العملاء الذكي.\n"
-                "يمكنك إرسال سؤالك في أي وقت."
+                "مرحبًا بك! 👋\\n"
+                "أنا مساعد خدمة العملاء الذكي.\\n"
+                "يمكنك إرسال سؤالك أو صورة في أي وقت."
             )
 
     elif user_text.startswith("/cancel"):
         clear_pending_telegram_order(chat_id)
         reply = "تم إلغاء الطلب الجاري."
+
+    elif photos:
+        # Telegram sends several sizes; the last entry is normally the largest.
+        photo = photos[-1]
+        image_bytes = await asyncio.to_thread(
+            download_telegram_photo,
+            photo.get("file_id"),
+        )
+
+        if not image_bytes:
+            reply = (
+                "عذرًا، لم أتمكن من تحميل الصورة أو أن حجمها أكبر من الحد المسموح. "
+                "أرسل صورة أصغر من 10 ميجابايت وحاول مجددًا."
+            )
+        else:
+            try:
+                business_id = await asyncio.to_thread(
+                    get_telegram_business_id, chat_id
+                )
+                context = (
+                    await asyncio.to_thread(get_business_context, business_id)
+                    if business_id else None
+                )
+                prompt = caption or (
+                    "حلّل الصورة المرسلة من العميل، واشرح ما يظهر فيها "
+                    "وساعده اعتمادًا على معلومات النشاط التجاري."
+                )
+                reply = await asyncio.to_thread(
+                    generate_ai_response,
+                    f"telegram_{chat_id}",
+                    prompt,
+                    image_bytes,
+                    context,
+                    f"telegram_{chat_id}_{business_id or 'default'}",
+                )
+            except Exception:
+                logger.exception("Failed to process Telegram photo with AI.")
+                reply = (
+                    "وصلتني الصورة، لكن تعذّر تحليلها الآن. "
+                    "يرجى المحاولة مرة أخرى أو كتابة سؤالك نصيًا."
+                )
 
     else:
         try:
@@ -997,191 +1093,3 @@ async def receive_telegram_webhook(request: Request):
 
     return {"ok": True}
 
-
-# -----------------------------
-# WhatsApp webhook
-# -----------------------------
-
-@app.get("/webhook")
-async def verify_webhook(request: Request):
-    params = request.query_params
-
-    if (
-        params.get("hub.mode") == "subscribe"
-        and params.get("hub.verify_token") == VERIFY_TOKEN
-    ):
-        return Response(
-            content=params.get("hub.challenge", ""),
-            media_type="text/plain",
-        )
-
-    raise HTTPException(
-        status_code=403,
-        detail="Verification failed",
-    )
-
-
-@app.post("/webhook")
-async def receive_webhook(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON body",
-        )
-
-    try:
-        context = await asyncio.to_thread(
-            get_whatsapp_business_context
-        )
-
-        for entry in body.get("entry", []):
-            for change in entry.get("changes", []):
-                value = change.get("value", {})
-
-                for message in value.get("messages", []):
-                    from_number = message.get("from")
-                    msg_type = message.get("type")
-
-                    if not from_number:
-                        continue
-
-                    user_text = ""
-                    image_bytes = None
-
-                    if msg_type == "text":
-                        user_text = (
-                            message.get("text", {}).get("body", "")
-                        )
-
-                    elif msg_type == "image":
-                        image_data = message.get("image", {})
-
-                        user_text = image_data.get(
-                            "caption",
-                            "يرجى وصف الصورة.",
-                        )
-
-                        image_bytes = await asyncio.to_thread(
-                            download_whatsapp_media,
-                            image_data.get("id"),
-                        )
-
-                        if not image_bytes:
-                            await asyncio.to_thread(
-                                send_whatsapp_message,
-                                from_number,
-                                "عذرًا، لم أتمكن من تحميل الصورة.",
-                            )
-                            continue
-
-                    elif msg_type in ("audio", "voice"):
-                        audio_data = message.get(msg_type, {})
-
-                        audio_bytes = await asyncio.to_thread(
-                            download_whatsapp_media,
-                            audio_data.get("id"),
-                        )
-
-                        if not audio_bytes:
-                            continue
-
-                        temp_path = None
-
-                        try:
-                            with tempfile.NamedTemporaryFile(
-                                delete=False,
-                                suffix=".ogg",
-                            ) as temp_audio:
-                                temp_audio.write(audio_bytes)
-                                temp_path = temp_audio.name
-
-                            user_text = await asyncio.to_thread(
-                                transcribe_audio,
-                                temp_path,
-                            )
-
-                        except Exception:
-                            logger.exception("فشل تحويل الرسالة الصوتية.")
-                            continue
-
-                        finally:
-                            if temp_path and os.path.exists(temp_path):
-                                os.remove(temp_path)
-
-                    else:
-                        continue
-
-                    if not user_text and not image_bytes:
-                        continue
-
-                    ai_reply = await asyncio.to_thread(
-                        generate_ai_response,
-                        f"whatsapp_{from_number}",
-                        user_text,
-                        image_bytes,
-                        context,
-                        (
-                            f"whatsapp_{PHONE_NUMBER_ID or 'default'}_"
-                            f"{from_number}"
-                        ),
-                    )
-
-                    await asyncio.to_thread(
-                        send_whatsapp_message,
-                        from_number,
-                        ai_reply,
-                    )
-
-    except Exception:
-        logger.exception("حدث خطأ أثناء معالجة Webhook واتساب.")
-
-    return {"status": "ok"}
-
-
-# -----------------------------
-# Test AI endpoint
-# -----------------------------
-
-class TestAIRequest(BaseModel):
-    message: str
-
-
-@app.post("/test-ai")
-async def test_ai(request: TestAIRequest):
-    try:
-        reply = await asyncio.to_thread(
-            generate_ai_response,
-            "test-session",
-            request.message,
-        )
-
-        return {
-            "success": True,
-            "reply": reply,
-        }
-
-    except Exception:
-        logger.exception("فشل اختبار الذكاء الاصطناعي.")
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "فشل اختبار الذكاء الاصطناعي. "
-                "راجع سجلات Render."
-            ),
-        )
-
-
-# -----------------------------
-# Health check
-# -----------------------------
-
-@app.get("/")
-async def home():
-    return {
-        "status": "running",
-        "message": "Customer service bot is running.",
-        "supabase_configured": supabase is not None,
-    }
