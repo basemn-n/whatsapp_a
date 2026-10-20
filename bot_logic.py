@@ -61,10 +61,12 @@ def generate_ai_response(
     history_key: معرف مستقل للمحادثة حتى لا تختلط محادثات العملاء.
     """
 
+    # Never fall back to a global company file for a tenant conversation:
+    # that could disclose another store's products or policies.
     context = (
         business_context.strip()
         if isinstance(business_context, str) and business_context.strip()
-        else company_knowledge or "معلومات النشاط التجاري غير متوفرة حاليًا."
+        else "معلومات النشاط التجاري غير متوفرة حاليًا. لا تؤكد أي أسعار أو منتجات."
     )
 
     system_prompt = (
