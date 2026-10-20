@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from bot_logic import generate_ai_response, transcribe_audio
+from telegram_products import import_telegram_product_post
 
 load_dotenv()
 
@@ -26,6 +27,9 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
+TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv("TELEGRAM_PRODUCTS_BUSINESS_ID", "").strip()
+TELEGRAM_PRODUCTS_CURRENCY = os.getenv("TELEGRAM_PRODUCTS_CURRENCY", "YER").strip().upper()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -898,7 +902,7 @@ async def configure_telegram_webhook():
             {
                 "url": webhook_url,
                 "secret_token": secret_token,
-                "allowed_updates": ["message"],
+                "allowed_updates": ["message", "channel_post", "edited_channel_post"],
                 "drop_pending_updates": False,
             },
             20,
@@ -1155,6 +1159,35 @@ def download_telegram_audio(file_id: str):
 
 
 async def process_telegram_update(update: dict):
+    # Import product posts from the configured Telegram source channel.
+    source_post = update.get("channel_post") or update.get("edited_channel_post")
+    if source_post:
+        source_chat = source_post.get("chat") or {}
+        source_chat_id = str(source_chat.get("id", ""))
+        configured_chat_id = TELEGRAM_PRODUCTS_CHAT_ID
+        if configured_chat_id and source_chat_id == configured_chat_id:
+            if not TELEGRAM_PRODUCTS_BUSINESS_ID:
+                logger.error(
+                    "Telegram product import is enabled but TELEGRAM_PRODUCTS_BUSINESS_ID is missing."
+                )
+                return
+            try:
+                result = await asyncio.to_thread(
+                    import_telegram_product_post,
+                    source_post,
+                    supabase,
+                    TELEGRAM_PRODUCTS_BUSINESS_ID,
+                    TELEGRAM_PRODUCTS_CURRENCY,
+                )
+                logger.info(
+                    "Telegram product post processed: chat_id=%s result=%s",
+                    source_chat_id,
+                    result,
+                )
+            except Exception:
+                logger.exception("Failed to import a product from Telegram.")
+        return
+
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
