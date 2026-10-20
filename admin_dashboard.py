@@ -21,13 +21,13 @@ MERCHANT_SESSION_SECONDS = 8 * 60 * 60
 
 
 class MerchantLogin(BaseModel):
-    email: str = Field(min_length=5, max_length=254)
+    username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=1, max_length=256)
 
 
 class MerchantAccountCreate(BaseModel):
     business_id: str
-    email: str = Field(min_length=5, max_length=254)
+    username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=12, max_length=256)
 
 
@@ -60,7 +60,7 @@ def _password_matches(password: str, encoded: str):
         return False
 
 
-def _issue_merchant_token(email: str, business_id: str):
+def _issue_merchant_token(username: str, business_id: str):
     secret = _merchant_session_secret()
     if not secret:
         raise HTTPException(
@@ -68,7 +68,7 @@ def _issue_merchant_token(email: str, business_id: str):
             detail="إعداد MERCHANT_SESSION_SECRET غير مكتمل في Render",
         )
     payload = {
-        "email": email,
+        "username": username,
         "business_id": business_id,
         "exp": int(time.time()) + MERCHANT_SESSION_SECONDS,
     }
@@ -97,7 +97,7 @@ def _read_merchant_token(token: str):
         payload = json.loads(raw.decode("utf-8"))
         if int(payload.get("exp", 0)) < int(time.time()):
             return None
-        if not payload.get("email") or not payload.get("business_id"):
+        if not payload.get("username") or not payload.get("business_id"):
             return None
         return payload
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
@@ -204,8 +204,8 @@ def create_admin_router(supabase):
             try:
                 account = (
                     supabase.table("merchant_accounts")
-                    .select("email, business_id, is_active")
-                    .eq("email", payload["email"].lower())
+                    .select("username, business_id, is_active")
+                    .eq("username", payload["username"].lower())
                     .eq("business_id", payload["business_id"])
                     .eq("is_active", True)
                     .limit(1)
@@ -218,7 +218,7 @@ def create_admin_router(supabase):
                 raise HTTPException(status_code=401, detail="حساب التاجر غير نشط")
             return {
                 "role": "merchant",
-                "email": payload["email"].lower(),
+                "username": payload["username"].lower(),
                 "business_id": str(payload["business_id"]),
             }
 
@@ -261,14 +261,14 @@ def create_admin_router(supabase):
                 status_code=503,
                 detail="يلزم إعداد MERCHANT_SESSION_SECRET في Render قبل تفعيل حسابات التجار",
             )
-        email = payload.email.strip().lower()
-        if "@" not in email:
-            raise HTTPException(status_code=401, detail="البريد الإلكتروني أو كلمة المرور غير صحيحة")
+        username = payload.username.strip().lower()
+        if not username:
+            raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غير صحيحة")
         try:
             result = (
                 supabase.table("merchant_accounts")
-                .select("email, business_id, password_hash, is_active")
-                .eq("email", email)
+                .select("username, business_id, password_hash, is_active")
+                .eq("username", username)
                 .eq("is_active", True)
                 .limit(1)
                 .execute()
@@ -281,8 +281,8 @@ def create_admin_router(supabase):
             )
         account = result.data[0] if result.data else None
         if not account or not _password_matches(payload.password, account.get("password_hash", "")):
-            raise HTTPException(status_code=401, detail="البريد الإلكتروني أو كلمة المرور غير صحيحة")
-        token = _issue_merchant_token(email, str(account["business_id"]))
+            raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غير صحيحة")
+        token = _issue_merchant_token(username, str(account["business_id"]))
         return {
             "access_token": token,
             "token_type": "bearer",
@@ -303,19 +303,19 @@ def create_admin_router(supabase):
                 detail="أضف MERCHANT_SESSION_SECRET إلى Render قبل إنشاء حسابات التجار",
             )
         get_business_or_404(payload.business_id)
-        email = payload.email.strip().lower()
-        if "@" not in email:
-            raise HTTPException(status_code=400, detail="أدخل بريدًا إلكترونيًا صحيحًا")
+        username = payload.username.strip().lower()
+        if not username or any(ch.isspace() for ch in username):
+            raise HTTPException(status_code=400, detail="اسم المستخدم مطلوب ولا يجوز أن يحتوي على مسافات")
         try:
             result = (
                 supabase.table("merchant_accounts")
                 .insert({
                     "business_id": payload.business_id,
-                    "email": email,
+                    "username": username,
                     "password_hash": _password_hash(payload.password),
                     "is_active": True,
                 })
-                .select("id, business_id, email, is_active, created_at")
+                .select("id, business_id, username, is_active, created_at")
                 .execute()
             )
             if not result.data:
@@ -327,7 +327,7 @@ def create_admin_router(supabase):
             logger.exception("تعذر إنشاء حساب التاجر.")
             raise HTTPException(
                 status_code=409,
-                detail="تعذر إنشاء الحساب. قد يكون البريد مستخدمًا مسبقًا أو أن جدول حسابات التجار غير مُعد.",
+                detail="تعذر إنشاء الحساب. قد يكون اسم المستخدم مستخدمًا مسبقًا أو أن جدول حسابات التجار غير مُعد.",
             )
 
     def get_business_or_404(business_id):
@@ -679,27 +679,31 @@ async function api(url, options = {}) {
 }
 
 async function login() {
-  const username = prompt("للمدير: اسم المستخدم الإداري. للتاجر: البريد الإلكتروني المسجل له.");
+  const loginType = prompt("نوع الدخول:\n1 = المدير العام\n2 = التاجر");
+  if (loginType === null) return false;
+  const username = prompt(loginType.trim() === "2" ? "اسم المستخدم الخاص بالتاجر" : "اسم المستخدم الإداري");
   if (username === null) return false;
   const password = prompt("كلمة المرور");
   if (password === null) return false;
 
   try {
-    if (username.includes("@")) {
+    if (loginType.trim() === "2") {
       const response = await fetch("/api/merchant/login", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({email: username.trim(), password})
+        body: JSON.stringify({username: username.trim(), password})
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw Error(data.detail || "تعذر تسجيل الدخول.");
       auth = "Bearer " + data.access_token;
       isMerchantSession = true;
-    } else {
+    } else if (loginType.trim() === "1") {
       auth = "Basic " + btoa(
         unescape(encodeURIComponent(username + ":" + password))
       );
       isMerchantSession = false;
+    } else {
+      throw Error("اختر 1 للمدير العام أو 2 للتاجر.");
     }
     await api("/api/admin/businesses");
     return true;
@@ -709,7 +713,6 @@ async function login() {
     return false;
   }
 }
-
 async function ensureLogin() {
   if (auth) return true;
   return await login();
@@ -1023,8 +1026,8 @@ async function createMerchantAccount() {
     setMessage("اختر النشاط التجاري الذي تريد إنشاء حساب له.");
     return;
   }
-  const email = prompt("أدخل البريد الإلكتروني الذي سيستخدمه التاجر لتسجيل الدخول:");
-  if (email === null) return;
+  const username = prompt("أنشئ اسم مستخدم للتاجر بدون مسافات (مثال: shop_ahmed):");
+  if (username === null) return;
   const password = prompt("أنشئ كلمة مرور قوية للتاجر (12 حرفًا على الأقل). سلّمها له بطريقة آمنة:");
   if (password === null) return;
   if (password.length < 12) {
@@ -1034,9 +1037,9 @@ async function createMerchantAccount() {
   try {
     const result = await api("/api/admin/merchant-accounts", {
       method: "POST",
-      body: JSON.stringify({business_id: businessId, email: email.trim(), password})
+      body: JSON.stringify({business_id: businessId, username: username.trim(), password})
     });
-    setMessage("تم إنشاء حساب التاجر: " + result.account.email + ". سلّم بيانات الدخول للتاجر بطريقة آمنة.");
+    setMessage("تم إنشاء حساب التاجر: " + result.account.username + ". سلّم بيانات الدخول للتاجر بطريقة آمنة.");
   } catch (error) {
     setMessage(error.message);
   }
