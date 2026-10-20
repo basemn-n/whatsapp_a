@@ -427,7 +427,17 @@ def save_telegram_order(chat_id: int, order_data: dict):
                 .select("id, order_number, status")
                 .execute()
             )
-        except Exception:
+        except Exception as snapshot_error:
+            error_text = str(snapshot_error).lower()
+            missing_snapshot_column = any(
+                column in error_text
+                for column in ("unit_price", "total_price", "currency")
+            ) and any(
+                marker in error_text
+                for marker in ("column", "schema cache", "does not exist", "could not find")
+            )
+            if not missing_snapshot_column:
+                raise
             logger.warning(
                 "Order price snapshot columns are unavailable; retrying "
                 "with legacy fields. Apply the SQL migration for accurate reports."
@@ -1152,6 +1162,7 @@ async def process_telegram_update(update: dict):
     caption = (message.get("caption") or "").strip()
     photos = message.get("photo") or []
     audio_attachment = message.get("voice") or message.get("audio")
+    command = user_text.split(maxsplit=1)[0].lower() if user_text else ""
 
     if not chat_id or (not user_text and not photos and not audio_attachment):
         return
@@ -1190,7 +1201,7 @@ async def process_telegram_update(update: dict):
                 "يمكنك أيضًا إرسال سؤالك أو صورة أو رسالة صوتية."
             )
 
-    elif user_text.split(maxsplit=1)[0].lower() == "/help":
+    elif command == "/help":
         reply = (
             "مساعدة سريعة 🤝\n"
             "/products — عرض المنتجات المتاحة وأسعارها\n"
@@ -1199,7 +1210,7 @@ async def process_telegram_update(update: dict):
             "يمكنك إرسال سؤالك كتابةً أو بصورة أو برسالة صوتية."
         )
 
-    elif user_text.split(maxsplit=1)[0].lower() == "/products":
+    elif command == "/products":
         business_id = await asyncio.to_thread(
             get_telegram_business_id, chat_id
         )
@@ -1228,7 +1239,7 @@ async def process_telegram_update(update: dict):
             lines.append("\nلطلب منتج، اكتب /order ثم اتبع التعليمات.")
             reply = "\n".join(lines)
 
-    elif user_text.split(maxsplit=1)[0].lower() == "/order":
+    elif command == "/order":
         business_id = await asyncio.to_thread(
             get_telegram_business_id, chat_id
         )
