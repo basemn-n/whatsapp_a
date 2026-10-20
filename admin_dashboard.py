@@ -234,6 +234,8 @@ td select{max-width:180px;background:white}
 onclick="showTab('orders')">الطلبات</button>
 <button id="productsTab"
 onclick="showTab('products')">المنتجات</button>
+<button id="reportsTab"
+onclick="showTab('reports')">تقارير المبيعات</button>
 </div>
 
 <div id="msg" role="status">جارٍ الاتصال...</div>
@@ -376,6 +378,26 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 </table>
 </div>
 </section>
+
+<section id="reportsPanel" class="panel hidden">
+<h3>تقارير المبيعات</h3>
+<p>تعرض التقارير الطلبات المحمّلة (حتى 1000 طلب حديث). المبيعات الدقيقة متاحة للطلبات التي حُفظ سعرها وقت الطلب؛ أما الطلبات القديمة فتظهر كتقدير حسب السعر الحالي للمنتج.</p>
+<div class="toolbar">
+<button id="refreshReportsBtn" onclick="loadReports()">تحديث التقرير</button>
+</div>
+<div class="stats">
+  <div class="stat-card"><span>إجمالي الطلبات</span><strong id="reportTotalOrders">—</strong></div>
+  <div class="stat-card"><span>قيد المراجعة</span><strong id="reportPendingOrders">—</strong></div>
+  <div class="stat-card"><span>قيد التجهيز</span><strong id="reportProcessingOrders">—</strong></div>
+  <div class="stat-card"><span>تم التسليم</span><strong id="reportDeliveredOrders">—</strong></div>
+</div>
+<div class="panel">
+<h4>قيمة الطلبات التي تم تسليمها</h4>
+<p id="exactRevenue">المبيعات الدقيقة: —</p>
+<p id="estimatedRevenue">المبيعات التقديرية للطلبات القديمة: —</p>
+<p id="missingRevenue">طلبات لا يمكن تقدير قيمتها: —</p>
+</div>
+</section>
 </main>
 
 <script>
@@ -482,6 +504,8 @@ function showTab(tab) {
 
   if (tab === "products") {
     loadBusinesses();
+  } else if (tab === "reports") {
+    loadReports();
   } else {
     loadOrders();
   }
@@ -636,6 +660,41 @@ function renderOrders() {
     "إجمالي الطلبات المحمّلة: " + allOrders.length +
     " | نتائج البحث والتصفية: " + visibleOrders.length
   );
+}
+
+/* تقرير المبيعات */
+function formatMoneyGroups(groups) {
+  if (!groups || Object.keys(groups).length === 0) return "لا توجد بيانات";
+  return Object.entries(groups)
+    .map(([currency, amount]) =>
+      Number(amount).toLocaleString("ar", {maximumFractionDigits: 2}) + " " + currency
+    )
+    .join("، ");
+}
+
+async function loadReports() {
+  const button = document.getElementById("refreshReportsBtn");
+  button.disabled = true;
+  try {
+    if (!(await ensureLogin())) return;
+    setMessage("جارٍ تحميل تقرير المبيعات...");
+    const data = await api("/api/admin/reports/sales");
+    document.getElementById("reportTotalOrders").textContent = data.total_orders ?? 0;
+    document.getElementById("reportPendingOrders").textContent = data.pending_orders ?? 0;
+    document.getElementById("reportProcessingOrders").textContent = data.processing_orders ?? 0;
+    document.getElementById("reportDeliveredOrders").textContent = data.delivered_orders ?? 0;
+    document.getElementById("exactRevenue").textContent =
+      "المبيعات الدقيقة للطلبات المسلّمة: " + formatMoneyGroups(data.exact_revenue);
+    document.getElementById("estimatedRevenue").textContent =
+      "تقدير الطلبات القديمة حسب السعر الحالي: " + formatMoneyGroups(data.estimated_revenue);
+    document.getElementById("missingRevenue").textContent =
+      "طلبات مسلّمة بلا سعر يمكن حسابه: " + (data.missing_price_orders ?? 0);
+    setMessage("تم تحديث تقرير المبيعات.");
+  } catch (error) {
+    setMessage(error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 /* الأنشطة التجارية */
@@ -1040,6 +1099,101 @@ loadOrders();
             raise HTTPException(
                 status_code=500,
                 detail="تعذر تحميل الطلبات",
+            )
+
+    @router.get("/api/admin/reports/sales")
+    def sales_report(
+        _admin: bool = Depends(check_admin),
+    ):
+        """Summarize recent orders and distinguish saved revenue from estimates."""
+        try:
+            order_result = (
+                supabase.table("orders")
+                .select("*")
+                .order("created_at", desc=True)
+                .limit(1000)
+                .execute()
+            )
+            orders = order_result.data or []
+
+            product_result = (
+                supabase.table("products")
+                .select("business_id, name, price, currency")
+                .limit(5000)
+                .execute()
+            )
+            product_prices = {}
+            for product in product_result.data or []:
+                key = (
+                    str(product.get("business_id") or ""),
+                    str(product.get("name") or "").strip().casefold(),
+                )
+                product_prices[key] = {
+                    "price": product.get("price"),
+                    "currency": product.get("currency") or "YER",
+                }
+
+            counts = {
+                "pending_orders": 0,
+                "processing_orders": 0,
+                "delivered_orders": 0,
+                "cancelled_orders": 0,
+            }
+            exact_revenue = {}
+            estimated_revenue = {}
+            missing_price_orders = 0
+
+            for order in orders:
+                status = order.get("status")
+                if status == "pending":
+                    counts["pending_orders"] += 1
+                elif status == "processing":
+                    counts["processing_orders"] += 1
+                elif status == "delivered":
+                    counts["delivered_orders"] += 1
+                elif status == "cancelled":
+                    counts["cancelled_orders"] += 1
+
+                if status != "delivered":
+                    continue
+
+                try:
+                    quantity = float(order.get("quantity") or 0)
+                    if quantity <= 0:
+                        raise ValueError("invalid quantity")
+                    if order.get("total_price") is not None:
+                        amount = float(order["total_price"])
+                        currency = order.get("currency") or "YER"
+                        target = exact_revenue
+                    else:
+                        key = (
+                            str(order.get("business_id") or ""),
+                            str(order.get("product_name") or "").strip().casefold(),
+                        )
+                        product = product_prices.get(key)
+                        if not product or product.get("price") is None:
+                            missing_price_orders += 1
+                            continue
+                        amount = float(product["price"]) * quantity
+                        currency = product.get("currency") or "YER"
+                        target = estimated_revenue
+                    target[currency] = round(target.get(currency, 0) + amount, 2)
+                except (TypeError, ValueError):
+                    missing_price_orders += 1
+
+            return {
+                "total_orders": len(orders),
+                **counts,
+                "exact_revenue": exact_revenue,
+                "estimated_revenue": estimated_revenue,
+                "missing_price_orders": missing_price_orders,
+                "limit": 1000,
+            }
+        except Exception:
+            logger.exception("تعذر إنشاء تقرير المبيعات")
+            raise HTTPException(
+                status_code=500,
+                detail="تعذر إنشاء تقرير المبيعات. تحقق من جداول الطلبات والمنتجات.",
             )
 
     @router.patch("/api/admin/orders/{order_id}/status")
