@@ -1606,7 +1606,9 @@ function renderProducts() {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 6;
-    td.textContent = "لا توجد منتجات لهذا النشاط التجاري.";
+    td.textContent = isMerchantSession
+      ? "لا توجد منتجات في متجرك حتى الآن. أضف أول منتج من نموذج «إضافة منتج جديد» أعلاه؛ منتجات المتاجر الأخرى لا تظهر هنا."
+      : "لا توجد منتجات لهذا النشاط التجاري.";
     tr.appendChild(td);
     rows.appendChild(tr);
     return;
@@ -1757,7 +1759,13 @@ document.getElementById("orderSearch")
 if (auth) {
   document.getElementById("accountBtn").classList.add("hidden");
   document.getElementById("logoutBtn").classList.remove("hidden");
-  loadOrders();
+  // Restore the selected business after refresh before loading any private data.
+  // Merchant sessions receive only their own business from /api/admin/businesses.
+  (async () => {
+    await loadBusinesses();
+    await loadOrders();
+    await loadReports();
+  })();
 } else {
   openLogin();
 }
