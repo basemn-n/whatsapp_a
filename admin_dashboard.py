@@ -429,10 +429,37 @@ def create_admin_router(supabase):
                 )
             business_id = None
             account_id = None
+            auth_user_id = None
             try:
+                # businesses.owner_id is a required FK to auth.users. Create a
+                # dedicated internal Auth identity for this merchant request;
+                # the merchant continues to sign in with merchant_accounts.
+                # The synthetic, unique address is never used for email delivery.
+                internal_email = f"merchant-{request_id}@example.com"
+                auth_response = supabase.auth.admin.create_user({
+                    "email": internal_email,
+                    "password": secrets.token_urlsafe(48),
+                    "email_confirm": True,
+                    "user_metadata": {
+                        "internal_merchant_identity": True,
+                        "merchant_username": signup["username"],
+                        "signup_request_id": request_id,
+                    },
+                })
+                auth_user = getattr(auth_response, "user", None)
+                if auth_user is None and isinstance(auth_response, dict):
+                    auth_user = auth_response.get("user")
+                auth_user_id = (
+                    auth_user.get("id") if isinstance(auth_user, dict)
+                    else getattr(auth_user, "id", None)
+                )
+                if not auth_user_id:
+                    raise RuntimeError("Supabase Auth did not return the internal user id")
+
                 business_result = (
                     supabase.table("businesses")
                     .insert({
+                        "owner_id": str(auth_user_id),
                         "name": signup["store_name"],
                         "industry": signup.get("industry") or "",
                         "description": "",
@@ -479,11 +506,13 @@ def create_admin_router(supabase):
                         supabase.table("merchant_accounts").delete().eq("id", account_id).execute()
                     if business_id:
                         supabase.table("businesses").delete().eq("id", business_id).execute()
+                    if auth_user_id:
+                        supabase.auth.admin.delete_user(str(auth_user_id))
                 except Exception:
-                    logger.exception("تعذر التراجع الكامل عن سجل الموافقة.")
+                    logger.exception("تعذر التراجع الكامل عن سجلات وهوية الموافقة.")
                 raise HTTPException(
                     status_code=500,
-                    detail="لم تكتمل الموافقة ولم يتم تأكيد تفعيل الحساب. تحقق من مخطط جدول businesses وmerchant_accounts ثم أعد المحاولة.",
+                    detail="لم تكتمل الموافقة. تحقق من إعداد مفتاح Supabase Service Role وصلاحيات Auth وجداول businesses وmerchant_accounts ثم أعد المحاولة.",
                 )
             return {
                 "success": True,
