@@ -107,9 +107,21 @@ def _read_merchant_token(token: str):
             return None
         raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
         payload = json.loads(raw.decode("utf-8"))
-        if int(payload.get("exp", 0)) < int(time.time()):
+        # Only accept a JSON object with the exact identity fields needed by
+        # authorization checks. Treat malformed, incomplete, or expired tokens
+        # as unauthenticated rather than letting them reach route handlers.
+        if not isinstance(payload, dict):
             return None
-        if not payload.get("username") or not payload.get("business_id"):
+        expires_at = payload.get("exp")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, int):
+            return None
+        if expires_at <= int(time.time()):
+            return None
+        username = payload.get("username")
+        business_id = payload.get("business_id")
+        if not isinstance(username, str) or not username.strip():
+            return None
+        if not isinstance(business_id, str) or not business_id.strip():
             return None
         return payload
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
