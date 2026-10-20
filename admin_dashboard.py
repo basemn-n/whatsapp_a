@@ -107,9 +107,21 @@ def _read_merchant_token(token: str):
             return None
         raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
         payload = json.loads(raw.decode("utf-8"))
-        if int(payload.get("exp", 0)) < int(time.time()):
+        # Only accept a JSON object with the exact identity fields needed by
+        # authorization checks. Treat malformed, incomplete, or expired tokens
+        # as unauthenticated rather than letting them reach route handlers.
+        if not isinstance(payload, dict):
             return None
-        if not payload.get("username") or not payload.get("business_id"):
+        expires_at = payload.get("exp")
+        if isinstance(expires_at, bool) or not isinstance(expires_at, int):
+            return None
+        if expires_at <= int(time.time()):
+            return None
+        username = payload.get("username")
+        business_id = payload.get("business_id")
+        if not isinstance(username, str) or not username.strip():
+            return None
+        if not isinstance(business_id, str) or not business_id.strip():
             return None
         return payload
     except (ValueError, TypeError, KeyError, json.JSONDecodeError):
@@ -834,7 +846,7 @@ onclick="showTab('requests')">طلبات التجار</button>
 
 <section id="productsPanel" class="panel hidden">
 <h3>إدارة المنتجات</h3>
-<p>اختر النشاط التجاري الذي تريد إدارة منتجاته.</p>
+<p id="productsIntro">إدارة منتجات النشاط التجاري المحدد.</p>
 
 <div class="toolbar"><button onclick="loadProducts()">تحديث المنتجات</button></div>
 <div class="sub-panel">
@@ -979,6 +991,33 @@ function setMessage(text) {
   msg.textContent = text;
 }
 
+function clearPrivateDashboardData() {
+  businesses = [];
+  currentProducts = [];
+  allOrders = [];
+  for (const id of [
+    "businessSelect", "productRows", "orderRows", "signupRequestRows"
+  ]) {
+    const element = document.getElementById(id);
+    if (element) element.replaceChildren();
+  }
+  for (const id of [
+    "totalOrders", "pendingOrders", "processingOrders", "deliveredOrders",
+    "reportTotalOrders", "reportPendingOrders", "reportProcessingOrders",
+    "reportDeliveredOrders"
+  ]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "0";
+  }
+  for (const id of ["exactRevenue", "estimatedRevenue", "missingRevenue"]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "—";
+  }
+  const link = document.getElementById("telegramCustomerLink");
+  if (link) link.textContent = "سجّل الدخول لعرض رابط المتجر.";
+  resetProductForm();
+}
+
 function cell(value) {
   const td = document.createElement("td");
   td.textContent =
@@ -1008,6 +1047,7 @@ async function api(url, options = {}) {
     isMerchantSession = false;
     sessionStorage.removeItem("store_admin_auth");
     sessionStorage.removeItem("store_admin_role");
+    clearPrivateDashboardData();
     document.getElementById("logoutBtn").classList.add("hidden");
     document.getElementById("accountBtn").classList.remove("hidden");
     openLogin();
@@ -1096,14 +1136,9 @@ document.getElementById("loginForm").addEventListener("submit", async event => {
 function logout() {
   auth = "";
   isMerchantSession = false;
-  businesses = [];
-  currentProducts = [];
-  allOrders = [];
+  clearPrivateDashboardData();
   sessionStorage.removeItem("store_admin_auth");
   sessionStorage.removeItem("store_admin_role");
-  document.getElementById("businessSelect").replaceChildren();
-  document.getElementById("productRows").replaceChildren();
-  document.getElementById("orderRows").replaceChildren();
   document.getElementById("accountBtn").classList.remove("hidden");
   document.getElementById("logoutBtn").classList.add("hidden");
   setMessage("تم تسجيل الخروج. سجّل الدخول للمتابعة.");
@@ -1389,6 +1424,9 @@ async function loadBusinesses() {
 
     const select = document.getElementById("businessSelect");
     document.getElementById("businessToolbar").classList.toggle("hidden", isMerchantSession);
+    document.getElementById("productsIntro").textContent = isMerchantSession
+      ? "تظهر هنا منتجات متجرك فقط. تتم إدارة المنتجات تلقائيًا حسب حسابك."
+      : "اختر النشاط التجاري الذي تريد إدارة منتجاته.";
     document.getElementById("createMerchantAccountBtn").classList.toggle("hidden", isMerchantSession);
     document.getElementById("requestsTab").classList.toggle("hidden", isMerchantSession);
     const previous = select.value;

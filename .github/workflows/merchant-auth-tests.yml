@@ -1,0 +1,33 @@
+name: Merchant authentication tests
+
+on:
+  pull_request:
+    paths:
+      - "admin_dashboard.py"
+      - "tests/test_merchant_auth.py"
+      - ".github/workflows/merchant-auth-tests.yml"
+  push:
+    branches:
+      - main
+      - "feature/roadmap-phase1-merchant-hardening"
+    paths:
+      - "admin_dashboard.py"
+      - "tests/test_merchant_auth.py"
+      - ".github/workflows/merchant-auth-tests.yml"
+
+jobs:
+  merchant-auth-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip fastapi pydantic requests
+      - name: Run merchant authentication unit tests
+        env:
+          MERCHANT_SESSION_SECRET: "ci-only-test-secret"
+        run: python -m unittest discover -s tests -v
