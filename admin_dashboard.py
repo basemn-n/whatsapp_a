@@ -502,11 +502,17 @@ function showTab(tab) {
   document.getElementById("productsPanel")
     .classList.toggle("hidden", tab !== "products");
 
+  document.getElementById("reportsPanel")
+    .classList.toggle("hidden", tab !== "reports");
+
   document.getElementById("ordersTab")
     .classList.toggle("active", tab === "orders");
 
   document.getElementById("productsTab")
     .classList.toggle("active", tab === "products");
+
+  document.getElementById("reportsTab")
+    .classList.toggle("active", tab === "reports");
 
   if (tab === "products") {
     loadBusinesses();
