@@ -1389,6 +1389,9 @@ async function loadBusinesses() {
 
     const select = document.getElementById("businessSelect");
     document.getElementById("businessToolbar").classList.toggle("hidden", isMerchantSession);
+    document.getElementById("productsIntro").textContent = isMerchantSession
+      ? "تظهر هنا منتجات متجرك فقط. تتم إدارة المنتجات تلقائيًا حسب حسابك."
+      : "اختر النشاط التجاري الذي تريد إدارة منتجاته.";
     document.getElementById("createMerchantAccountBtn").classList.toggle("hidden", isMerchantSession);
     document.getElementById("requestsTab").classList.toggle("hidden", isMerchantSession);
     const previous = select.value;
