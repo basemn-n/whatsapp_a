@@ -979,6 +979,97 @@ def download_telegram_photo(file_id: str):
         return None
 
 
+async def respond_to_telegram_text(chat_id: int, user_text: str):
+    """Route recognized voice text through the same order and AI flow as typed text."""
+    try:
+        business_id = await asyncio.to_thread(
+            get_telegram_business_id, chat_id
+        )
+        order_reply = await asyncio.to_thread(
+            handle_telegram_order, chat_id, user_text, business_id
+        )
+
+        if order_reply is not None:
+            return order_reply
+        if user_text.startswith("/"):
+            return "الأوامر المتاحة: /start و /cancel"
+
+        context = (
+            await asyncio.to_thread(get_business_context, business_id)
+            if business_id else None
+        )
+        return await asyncio.to_thread(
+            generate_ai_response,
+            f"telegram_{chat_id}",
+            user_text,
+            None,
+            context,
+            f"telegram_{chat_id}_{business_id or 'default'}",
+        )
+    except Exception:
+        logger.exception("فشل معالجة نص Telegram (نص مكتوب أو مستخرج من الصوت).")
+        return "عذرًا، حدث خطأ مؤقت أثناء معالجة رسالتك. يرجى المحاولة مرة أخرى."
+
+
+def download_telegram_audio(file_id: str):
+    """Download a Telegram voice/audio attachment, limited to 20 MB."""
+    if not TELEGRAM_BOT_TOKEN or not file_id:
+        logger.warning("Telegram audio download skipped: token or file_id is missing.")
+        return None
+
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    try:
+        metadata_response = requests.get(
+            f"{api_url}/getFile",
+            params={"file_id": file_id},
+            timeout=20,
+        )
+        metadata_response.raise_for_status()
+        metadata = metadata_response.json()
+        if not metadata.get("ok"):
+            logger.warning(
+                "Telegram getFile for audio failed: %s",
+                metadata.get("description", "unknown Telegram API error"),
+            )
+            return None
+
+        file_path = (metadata.get("result") or {}).get("file_path")
+        if not file_path:
+            logger.warning("Telegram audio metadata did not include file_path.")
+            return None
+
+        suffix = os.path.splitext(file_path)[1].lower()
+        if suffix not in {".ogg", ".oga", ".mp3", ".m4a", ".wav", ".webm", ".mp4", ".mpeg", ".mpga", ".flac"}:
+            suffix = ".ogg"
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+        data = bytearray()
+        max_bytes = 20 * 1024 * 1024
+
+        with requests.get(file_url, timeout=40, stream=True) as audio_response:
+            audio_response.raise_for_status()
+            for chunk in audio_response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                data.extend(chunk)
+                if len(data) > max_bytes:
+                    logger.warning("Telegram audio exceeded the 20 MB download limit.")
+                    return None
+
+        if not data:
+            logger.warning("Telegram audio download returned an empty file.")
+            return None
+
+        logger.info("Telegram audio downloaded successfully (%s bytes).", len(data))
+        return bytes(data), suffix
+
+    except requests.RequestException:
+        logger.exception("Telegram audio HTTP request failed.")
+        return None
+    except (ValueError, TypeError):
+        logger.exception("Invalid Telegram audio metadata.")
+        return None
+
+
 async def process_telegram_update(update: dict):
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -986,8 +1077,9 @@ async def process_telegram_update(update: dict):
     user_text = (message.get("text") or "").strip()
     caption = (message.get("caption") or "").strip()
     photos = message.get("photo") or []
+    audio_attachment = message.get("voice") or message.get("audio")
 
-    if not chat_id or (not user_text and not photos):
+    if not chat_id or (not user_text and not photos and not audio_attachment):
         return
 
     if user_text.startswith("/start"):
@@ -1011,13 +1103,13 @@ async def process_telegram_update(update: dict):
             reply = (
                 "مرحبًا بك! 👋\n"
                 "تم ربط هذه المحادثة بالنشاط التجاري.\n"
-                "أرسل سؤالك أو صورة وسأساعدك."
+                "أرسل سؤالك أو صورة أو رسالة صوتية وسأساعدك."
             )
         else:
             reply = (
                 "مرحبًا بك! 👋\n"
                 "أنا مساعد خدمة العملاء الذكي.\n"
-                "يمكنك إرسال سؤالك أو صورة في أي وقت."
+                "يمكنك إرسال سؤالك أو صورة أو رسالة صوتية في أي وقت."
             )
 
     elif user_text.startswith("/cancel"):
@@ -1065,35 +1157,56 @@ async def process_telegram_update(update: dict):
                     "يرجى المحاولة مرة أخرى أو كتابة سؤالك نصيًا."
                 )
 
-    else:
-        try:
-            business_id = await asyncio.to_thread(
-                get_telegram_business_id, chat_id
-            )
-            order_reply = await asyncio.to_thread(
-                handle_telegram_order, chat_id, user_text, business_id
-            )
+    elif audio_attachment:
+        audio_result = await asyncio.to_thread(
+            download_telegram_audio,
+            audio_attachment.get("file_id"),
+        )
 
-            if order_reply is not None:
-                reply = order_reply
-            elif user_text.startswith("/"):
-                reply = "الأوامر المتاحة: /start و /cancel"
-            else:
-                context = (
-                    await asyncio.to_thread(get_business_context, business_id)
-                    if business_id else None
+        if not audio_result:
+            reply = (
+                "عذرًا، لم أتمكن من تحميل الرسالة الصوتية. "
+                "جرّب إرسال تسجيل أقصر، أو اكتب رسالتك نصيًا."
+            )
+        else:
+            audio_bytes, audio_suffix = audio_result
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix=audio_suffix,
+                ) as temp_audio:
+                    temp_audio.write(audio_bytes)
+                    temp_path = temp_audio.name
+
+                transcript = await asyncio.to_thread(
+                    transcribe_audio,
+                    temp_path,
                 )
-                reply = await asyncio.to_thread(
-                    generate_ai_response,
-                    f"telegram_{chat_id}",
-                    user_text,
-                    None,
-                    context,
-                    f"telegram_{chat_id}_{business_id or 'default'}",
+                logger.info(
+                    "Telegram voice transcribed successfully (chat_id=%s, chars=%s).",
+                    chat_id,
+                    len(transcript),
                 )
-        except Exception:
-            logger.exception("فشل معالجة رسالة Telegram.")
-            reply = "عذرًا، حدث خطأ مؤقت. يرجى المحاولة مرة أخرى."
+                reply = await respond_to_telegram_text(chat_id, transcript)
+            except Exception as exc:
+                logger.exception("Failed to transcribe/process Telegram voice message.")
+                if "25 ميجابايت" in str(exc):
+                    reply = "حجم الرسالة الصوتية كبير جدًا. أرسل تسجيلًا أقصر من فضلك."
+                else:
+                    reply = (
+                        "وصلتني رسالتك الصوتية، لكن تعذّر تحويلها إلى نص الآن. "
+                        "حاول مرة أخرى أو اكتب رسالتك."
+                    )
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        logger.warning("Could not remove temporary Telegram audio file.")
+
+    else:
+        reply = await respond_to_telegram_text(chat_id, user_text)
 
     await send_telegram_message(chat_id, reply)
 
