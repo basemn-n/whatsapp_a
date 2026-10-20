@@ -834,7 +834,7 @@ onclick="showTab('requests')">طلبات التجار</button>
 
 <section id="productsPanel" class="panel hidden">
 <h3>إدارة المنتجات</h3>
-<p>اختر النشاط التجاري الذي تريد إدارة منتجاته.</p>
+<p id="productsIntro">إدارة منتجات النشاط التجاري المحدد.</p>
 
 <div class="toolbar"><button onclick="loadProducts()">تحديث المنتجات</button></div>
 <div class="sub-panel">
