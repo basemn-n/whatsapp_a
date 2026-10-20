@@ -435,9 +435,10 @@ td select{max-width:180px;background:white}
 <h2>لوحة إدارة المتجر</h2>
 <p>إدارة الطلبات والمنتجات المحفوظة في قاعدة البيانات.</p>
 
-<div class="toolbar" style="margin-top:16px">
+<div class="toolbar" id="businessToolbar" style="margin-top:16px">
 <label for="businessSelect">النشاط التجاري الذي تعمل عليه اللوحة:</label>
 <select id="businessSelect"></select>
+<button id="createMerchantAccountBtn" class="secondary hidden" onclick="createMerchantAccount()">إنشاء حساب تاجر</button>
 </div>
 
 <div class="tabs">
@@ -624,6 +625,7 @@ const labels = {
 };
 
 let auth = "";
+let isMerchantSession = false;
 let businesses = [];
 let currentProducts = [];
 let allOrders = [];
@@ -692,10 +694,12 @@ async function login() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw Error(data.detail || "تعذر تسجيل الدخول.");
       auth = "Bearer " + data.access_token;
+      isMerchantSession = true;
     } else {
       auth = "Basic " + btoa(
         unescape(encodeURIComponent(username + ":" + password))
       );
+      isMerchantSession = false;
     }
     await api("/api/admin/businesses");
     return true;
@@ -978,6 +982,8 @@ async function loadBusinesses() {
     businesses = data.businesses || [];
 
     const select = document.getElementById("businessSelect");
+    document.getElementById("businessToolbar").classList.toggle("hidden", isMerchantSession);
+    document.getElementById("createMerchantAccountBtn").classList.toggle("hidden", isMerchantSession);
     const previous = select.value;
 
     select.replaceChildren();
@@ -1002,6 +1008,35 @@ async function loadBusinesses() {
 
     updateTelegramCustomerLink();
     await loadProducts();
+  } catch (error) {
+    setMessage(error.message);
+  }
+}
+
+async function createMerchantAccount() {
+  if (isMerchantSession) {
+    setMessage("إنشاء حسابات التجار متاح للمدير العام فقط.");
+    return;
+  }
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) {
+    setMessage("اختر النشاط التجاري الذي تريد إنشاء حساب له.");
+    return;
+  }
+  const email = prompt("أدخل البريد الإلكتروني الذي سيستخدمه التاجر لتسجيل الدخول:");
+  if (email === null) return;
+  const password = prompt("أنشئ كلمة مرور قوية للتاجر (12 حرفًا على الأقل). سلّمها له بطريقة آمنة:");
+  if (password === null) return;
+  if (password.length < 12) {
+    setMessage("يجب أن تكون كلمة المرور 12 حرفًا على الأقل.");
+    return;
+  }
+  try {
+    const result = await api("/api/admin/merchant-accounts", {
+      method: "POST",
+      body: JSON.stringify({business_id: businessId, email: email.trim(), password})
+    });
+    setMessage("تم إنشاء حساب التاجر: " + result.account.email + ". سلّم بيانات الدخول للتاجر بطريقة آمنة.");
   } catch (error) {
     setMessage(error.message);
   }
