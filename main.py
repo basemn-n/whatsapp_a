@@ -1039,7 +1039,10 @@ def download_telegram_audio(file_id: str):
             return None
 
         suffix = os.path.splitext(file_path)[1].lower()
-        if suffix not in {".ogg", ".oga", ".mp3", ".m4a", ".wav", ".webm", ".mp4", ".mpeg", ".mpga", ".flac"}:
+        if suffix == ".oga":
+            # Telegram voice notes use Ogg/Opus; use the commonly accepted .ogg extension.
+            suffix = ".ogg"
+        if suffix not in {".ogg", ".mp3", ".m4a", ".wav", ".webm", ".mp4", ".mpeg", ".mpga", ".flac"}:
             suffix = ".ogg"
         file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
         data = bytearray()
@@ -1188,7 +1191,10 @@ async def process_telegram_update(update: dict):
                     chat_id,
                     len(transcript),
                 )
-                reply = await respond_to_telegram_text(chat_id, transcript)
+                recognized_text = transcript
+                if caption:
+                    recognized_text = f"{caption}\n{transcript}"
+                reply = await respond_to_telegram_text(chat_id, recognized_text)
             except Exception as exc:
                 logger.exception("Failed to transcribe/process Telegram voice message.")
                 if "25 ميجابايت" in str(exc):
