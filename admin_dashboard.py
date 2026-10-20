@@ -482,7 +482,7 @@ async function login() {
   );
 
   try {
-    await api("/api/admin/orders");
+    await api("/api/admin/businesses");
     return true;
   } catch (error) {
     auth = "";
