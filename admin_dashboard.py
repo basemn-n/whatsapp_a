@@ -411,11 +411,15 @@ def create_admin_router(supabase):
             if signup.get("status") != "pending":
                 raise HTTPException(status_code=409, detail="تمت مراجعة هذا الطلب مسبقًا.")
             if payload.action == "reject":
-                supabase.table("merchant_signup_requests").update({
-                    "status": "rejected",
-                    "rejection_reason": payload.reason.strip(),
-                    "reviewed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-                }).eq("id", request_id).eq("status", "pending").execute()
+                rejected = (
+                    supabase.table("merchant_signup_requests").update({
+                        "status": "rejected",
+                        "rejection_reason": payload.reason.strip(),
+                        "reviewed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                    }).eq("id", request_id).eq("status", "pending").select("id").execute()
+                )
+                if not rejected.data:
+                    raise HTTPException(status_code=409, detail="تمت مراجعة هذا الطلب من جلسة أخرى.")
                 return {"success": True, "status": "rejected"}
 
             if not _merchant_session_secret():
@@ -463,6 +467,7 @@ def create_admin_router(supabase):
                     })
                     .eq("id", request_id)
                     .eq("status", "pending")
+                    .select("id")
                     .execute()
                 )
                 if not updated_request.data:
