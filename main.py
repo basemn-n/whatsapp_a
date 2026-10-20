@@ -386,7 +386,7 @@ def save_telegram_order(chat_id: int, order_data: dict):
 
         product_result = (
             supabase.table("products")
-            .select("name, is_available")
+            .select("name, is_available, price, currency")
             .eq("business_id", business_id)
             .eq("name", order_data["product_name"])
             .eq("is_available", True)
@@ -398,24 +398,46 @@ def save_telegram_order(chat_id: int, order_data: dict):
             logger.warning("المنتج لم يعد متاحًا؛ لم يُحفظ الطلب.")
             return None
 
-        result = (
-            supabase.table("orders")
-            .insert({
-                "business_id": business_id,
-                "customer_name": order_data["customer_name"].strip(),
-                "customer_phone": order_data["customer_phone"].strip(),
-                "customer_address": order_data["customer_address"].strip(),
-                "payment_method": order_data["payment_method"].strip(),
-                "product_name": product_result.data[0]["name"],
-                "quantity": quantity,
-                "status": "pending",
+        product = product_result.data[0]
+        base_order = {
+            "business_id": business_id,
+            "customer_name": order_data["customer_name"].strip(),
+            "customer_phone": order_data["customer_phone"].strip(),
+            "customer_address": order_data["customer_address"].strip(),
+            "payment_method": order_data["payment_method"].strip(),
+            "product_name": product["name"],
+            "quantity": quantity,
+            "status": "pending",
+            "telegram_chat_id": str(chat_id),
+        }
 
-                # الإضافة المطلوبة لإرسال إشعارات حالة الطلب:
-                "telegram_chat_id": str(chat_id),
-            })
-            .select("id, order_number, status")
-            .execute()
-        )
+        # Keep the price at purchase time for accurate historical sales.
+        # The fallback keeps existing databases working until migration is run.
+        try:
+            unit_price = float(product.get("price") or 0)
+            total_price = round(unit_price * quantity, 2)
+            result = (
+                supabase.table("orders")
+                .insert({
+                    **base_order,
+                    "unit_price": unit_price,
+                    "total_price": total_price,
+                    "currency": product.get("currency") or "YER",
+                })
+                .select("id, order_number, status")
+                .execute()
+            )
+        except Exception:
+            logger.warning(
+                "Order price snapshot columns are unavailable; retrying "
+                "with legacy fields. Apply the SQL migration for accurate reports."
+            )
+            result = (
+                supabase.table("orders")
+                .insert(base_order)
+                .select("id, order_number, status")
+                .execute()
+            )
 
         if not result.data:
             logger.error("لم تُرجع قاعدة البيانات سجل الطلب.")
@@ -1155,13 +1177,69 @@ async def process_telegram_update(update: dict):
             reply = (
                 "مرحبًا بك! 👋\n"
                 "تم ربط هذه المحادثة بالنشاط التجاري.\n"
-                "أرسل سؤالك أو صورة أو رسالة صوتية وسأساعدك."
+                "اكتب /products لعرض المنتجات والأسعار.\n"
+                "اكتب /order لبدء طلب جديد، أو /cancel لإلغاء الطلب الجاري.\n"
+                "يمكنك أيضًا إرسال سؤالك أو صورة أو رسالة صوتية."
             )
         else:
             reply = (
                 "مرحبًا بك! 👋\n"
                 "أنا مساعد خدمة العملاء الذكي.\n"
-                "يمكنك إرسال سؤالك أو صورة أو رسالة صوتية في أي وقت."
+                "افتح رابط البوت الخاص بالمتجر المنشور في قناة المنتجات لربط المحادثة.\n"
+                "بعد الربط استخدم /products لعرض المنتجات و /order لبدء طلب.\n"
+                "يمكنك أيضًا إرسال سؤالك أو صورة أو رسالة صوتية."
+            )
+
+    elif user_text.split(maxsplit=1)[0].lower() == "/help":
+        reply = (
+            "مساعدة سريعة 🤝\n"
+            "/products — عرض المنتجات المتاحة وأسعارها\n"
+            "/order — بدء طلب جديد\n"
+            "/cancel — إلغاء الطلب الجاري\n"
+            "يمكنك إرسال سؤالك كتابةً أو بصورة أو برسالة صوتية."
+        )
+
+    elif user_text.split(maxsplit=1)[0].lower() == "/products":
+        business_id = await asyncio.to_thread(
+            get_telegram_business_id, chat_id
+        )
+        products = (
+            await asyncio.to_thread(get_available_products, business_id)
+            if business_id else []
+        )
+        if not business_id:
+            reply = (
+                "لم يتم ربط هذه المحادثة بمتجر بعد. "
+                "افتح رابط البوت الخاص بالمتجر ثم اضغط Start."
+            )
+        elif not products:
+            reply = "لا توجد منتجات متاحة حاليًا."
+        else:
+            lines = ["المنتجات المتاحة حاليًا:"]
+            for product in products[:50]:
+                name = product.get("name") or "منتج"
+                price = product.get("price")
+                currency = product.get("currency") or "YER"
+                description = (product.get("description") or "").strip()
+                line = f"• {name} — {price} {currency}"
+                if description:
+                    line += f"\n  {description[:180]}"
+                lines.append(line)
+            lines.append("\nلطلب منتج، اكتب /order ثم اتبع التعليمات.")
+            reply = "\n".join(lines)
+
+    elif user_text.split(maxsplit=1)[0].lower() == "/order":
+        business_id = await asyncio.to_thread(
+            get_telegram_business_id, chat_id
+        )
+        if not business_id:
+            reply = (
+                "لم يتم ربط هذه المحادثة بمتجر بعد. "
+                "افتح رابط البوت الخاص بالمتجر ثم اضغط Start."
+            )
+        else:
+            reply = await asyncio.to_thread(
+                begin_telegram_order, chat_id, business_id, ""
             )
 
     elif user_text.startswith("/cancel"):
