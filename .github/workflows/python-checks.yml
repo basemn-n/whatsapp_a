@@ -19,3 +19,18 @@ jobs:
           python-version: "3.12"
       - name: Compile application modules
         run: python -m py_compile main.py admin_dashboard.py bot_logic.py telegram_products.py
+      - name: Check embedded dashboard JavaScript syntax
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          source = Path("admin_dashboard.py").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", source, flags=re.S)
+          if len(scripts) < 2:
+              raise SystemExit(f"Expected at least 2 embedded scripts, found {len(scripts)}")
+          for index, script in enumerate(scripts):
+              Path(f"/tmp/dashboard-script-{index}.js").write_text(script, encoding="utf-8")
+          print(f"Extracted {len(scripts)} JavaScript blocks for syntax checks.")
+          PY
+          for script in /tmp/dashboard-script-*.js; do node --check "$script"; done
