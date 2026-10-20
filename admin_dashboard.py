@@ -695,6 +695,7 @@ async function api(url, options = {}) {
     sessionStorage.removeItem("store_admin_role");
     document.getElementById("logoutBtn").classList.add("hidden");
     document.getElementById("accountBtn").classList.remove("hidden");
+    openLogin();
     throw Error("انتهت الجلسة أو رُفضت بيانات الدخول. سجّل الدخول مجددًا.");
   }
 
@@ -763,8 +764,9 @@ document.getElementById("loginForm").addEventListener("submit", async event => {
     setMessage("تم تسجيل الدخول بنجاح. جارٍ تحميل لوحة الإدارة...");
     const resolver = loginResolver;
     loginResolver = null;
-    if (resolver) resolver(true);
     if (!businesses.length) await loadBusinesses();
+    if (resolver) resolver(true);
+    else await loadOrders();
   } catch (error) {
     auth = "";
     sessionStorage.removeItem("store_admin_auth");
