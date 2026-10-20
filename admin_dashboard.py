@@ -991,6 +991,33 @@ function setMessage(text) {
   msg.textContent = text;
 }
 
+function clearPrivateDashboardData() {
+  businesses = [];
+  currentProducts = [];
+  allOrders = [];
+  for (const id of [
+    "businessSelect", "productRows", "orderRows", "signupRequestRows"
+  ]) {
+    const element = document.getElementById(id);
+    if (element) element.replaceChildren();
+  }
+  for (const id of [
+    "totalOrders", "pendingOrders", "processingOrders", "deliveredOrders",
+    "reportTotalOrders", "reportPendingOrders", "reportProcessingOrders",
+    "reportDeliveredOrders"
+  ]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "0";
+  }
+  for (const id of ["exactRevenue", "estimatedRevenue", "missingRevenue"]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "—";
+  }
+  const link = document.getElementById("telegramCustomerLink");
+  if (link) link.textContent = "سجّل الدخول لعرض رابط المتجر.";
+  resetProductForm();
+}
+
 function cell(value) {
   const td = document.createElement("td");
   td.textContent =
@@ -1020,6 +1047,7 @@ async function api(url, options = {}) {
     isMerchantSession = false;
     sessionStorage.removeItem("store_admin_auth");
     sessionStorage.removeItem("store_admin_role");
+    clearPrivateDashboardData();
     document.getElementById("logoutBtn").classList.add("hidden");
     document.getElementById("accountBtn").classList.remove("hidden");
     openLogin();
@@ -1108,14 +1136,9 @@ document.getElementById("loginForm").addEventListener("submit", async event => {
 function logout() {
   auth = "";
   isMerchantSession = false;
-  businesses = [];
-  currentProducts = [];
-  allOrders = [];
+  clearPrivateDashboardData();
   sessionStorage.removeItem("store_admin_auth");
   sessionStorage.removeItem("store_admin_role");
-  document.getElementById("businessSelect").replaceChildren();
-  document.getElementById("productRows").replaceChildren();
-  document.getElementById("orderRows").replaceChildren();
   document.getElementById("accountBtn").classList.remove("hidden");
   document.getElementById("logoutBtn").classList.add("hidden");
   setMessage("تم تسجيل الخروج. سجّل الدخول للمتابعة.");
