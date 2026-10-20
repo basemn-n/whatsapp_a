@@ -28,7 +28,8 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
-TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv("TELEGRAM_PRODUCTS_BUSINESS_ID", "68194d49-7ba4-4f49-867e-338b048d63e1").strip()
+# Empty by default: never silently import a catalog into a hard-coded business.
+TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv("TELEGRAM_PRODUCTS_BUSINESS_ID", "").strip()
 TELEGRAM_PRODUCTS_CURRENCY = os.getenv("TELEGRAM_PRODUCTS_CURRENCY", "YER").strip().upper()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -145,6 +146,26 @@ def get_business_context(business_id: str):
     except Exception:
         logger.exception("تعذر قراءة بيانات النشاط التجاري.")
         return None
+
+
+def get_channel_business_id(channel: str, external_account_id: str):
+    """Look up a tenant mapping for a specific connected channel/account."""
+    if not supabase or not channel or not external_account_id:
+        return None
+    try:
+        result = (
+            supabase.table("channel_connections")
+            .select("business_id")
+            .eq("channel", channel)
+            .eq("external_account_id", str(external_account_id))
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0].get("business_id") or None
+    except Exception:
+        logger.exception("تعذر تحديد النشاط المرتبط بالقناة %s.", channel)
+    return None
 
 
 def get_telegram_business_id(chat_id: int):
@@ -714,47 +735,24 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 # WhatsApp business context
 # -----------------------------
 
-def get_whatsapp_business_context():
-    if not supabase or not PHONE_NUMBER_ID:
-        return None
-
-    try:
-        result = (
-            supabase.table("channel_connections")
-            .select("business_id")
-            .eq("channel", "whatsapp")
-            .eq("external_account_id", PHONE_NUMBER_ID)
-            .limit(1)
-            .execute()
-        )
-
-        if not result.data:
-            return None
-
-        business_id = result.data[0].get("business_id")
-
-        if not business_id:
-            return None
-
-        return get_business_context(business_id)
-
-    except Exception:
-        logger.exception("تعذر ربط WhatsApp بالنشاط.")
-        return None
+def get_whatsapp_business_id(phone_number_id: str):
+    """Resolve the inbound WhatsApp business number to its tenant."""
+    return get_channel_business_id("whatsapp", phone_number_id)
 
 
 # -----------------------------
 # WhatsApp functions
 # -----------------------------
 
-def send_whatsapp_message(to_phone: str, message_text: str):
-    if not WHATSAPP_TOKEN or not PHONE_NUMBER_ID:
-        logger.error("إعدادات WhatsApp غير مكتملة.")
+def send_whatsapp_message(to_phone: str, message_text: str, phone_number_id: str = None):
+    active_phone_number_id = str(phone_number_id or PHONE_NUMBER_ID or "").strip()
+    if not WHATSAPP_TOKEN or not active_phone_number_id:
+        logger.error("إعدادات WhatsApp غير مكتملة أو رقم النشاط غير مربوط.")
         return
 
     url = (
         f"https://graph.facebook.com/v19.0/"
-        f"{PHONE_NUMBER_ID}/messages"
+        f"{active_phone_number_id}/messages"
     )
 
     headers = {
@@ -1070,6 +1068,11 @@ async def respond_to_telegram_text(chat_id: int, user_text: str):
         business_id = await asyncio.to_thread(
             get_telegram_business_id, chat_id
         )
+        if not business_id:
+            return (
+                "هذه المحادثة غير مرتبطة بمتجر بعد. افتح رابط البوت الخاص بالمتجر "
+                "واضغط Start أولًا حتى أجيب من كتالوجه الصحيح."
+            )
         order_reply = await asyncio.to_thread(
             handle_telegram_order, chat_id, user_text, business_id
         )
@@ -1159,6 +1162,8 @@ def download_telegram_audio(file_id: str):
 
 
 async def process_telegram_update(update: dict):
+    # Product publishing channels are import-only: never reply to their posts.
+    # Customer support is restricted to private chats to avoid group spam.
     # Import product posts from the configured Telegram source channel.
     source_post = update.get("channel_post") or update.get("edited_channel_post")
     if source_post:
@@ -1176,17 +1181,26 @@ async def process_telegram_update(update: dict):
             or (configured_username and source_username == configured_username)
         )
         if configured_chat_id and matches_source:
-            if not TELEGRAM_PRODUCTS_BUSINESS_ID:
-                logger.error(
-                    "Telegram product import is enabled but TELEGRAM_PRODUCTS_BUSINESS_ID is missing."
-                )
-                return
             try:
+                # Prefer an explicit per-channel tenant mapping. The environment
+                # fallback is only honored when the owner deliberately sets it.
+                business_id = await asyncio.to_thread(
+                    get_channel_business_id, "telegram_products", source_chat_id
+                )
+                if not business_id:
+                    business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or None
+                if not business_id:
+                    logger.error(
+                        "Telegram product import skipped: map this source channel "
+                        "to a business in channel_connections or explicitly set "
+                        "TELEGRAM_PRODUCTS_BUSINESS_ID."
+                    )
+                    return
                 result = await asyncio.to_thread(
                     import_telegram_product_post,
                     source_post,
                     supabase,
-                    TELEGRAM_PRODUCTS_BUSINESS_ID,
+                    business_id,
                     TELEGRAM_PRODUCTS_CURRENCY,
                 )
                 logger.info(
@@ -1200,6 +1214,10 @@ async def process_telegram_update(update: dict):
 
     message = update.get("message") or {}
     chat = message.get("chat") or {}
+    # Customer service should answer in private chats only. Group messages
+    # are ignored, while channel_post updates are handled by the import branch.
+    if chat.get("type") != "private":
+        return
     chat_id = chat.get("id")
     user_text = (message.get("text") or "").strip()
     caption = (message.get("caption") or "").strip()
@@ -1301,45 +1319,48 @@ async def process_telegram_update(update: dict):
         reply = "تم إلغاء الطلب الجاري."
 
     elif photos:
-        # Telegram includes multiple sizes; the last item is usually the largest.
-        photo = photos[-1]
-        image_bytes = await asyncio.to_thread(
-            download_telegram_photo,
-            photo.get("file_id"),
+        business_id = await asyncio.to_thread(
+            get_telegram_business_id, chat_id
         )
-
-        if not image_bytes:
+        if not business_id:
             reply = (
-                "عذرًا، لم أتمكن من تحميل الصورة أو أن حجمها أكبر من الحد المسموح. "
-                "أرسل صورة أصغر من 10 ميجابايت وحاول مجددًا."
+                "هذه المحادثة غير مرتبطة بمتجر بعد. افتح رابط البوت الخاص "
+                "بالمتجر واضغط Start أولًا حتى أساعدك من كتالوجه الصحيح."
             )
         else:
-            try:
-                business_id = await asyncio.to_thread(
-                    get_telegram_business_id, chat_id
-                )
-                context = (
-                    await asyncio.to_thread(get_business_context, business_id)
-                    if business_id else None
-                )
-                prompt = caption or (
-                    "حلّل الصورة المرسلة من العميل، واشرح ما يظهر فيها "
-                    "وساعده اعتمادًا على معلومات النشاط التجاري."
-                )
-                reply = await asyncio.to_thread(
-                    generate_ai_response,
-                    f"telegram_{chat_id}",
-                    prompt,
-                    image_bytes,
-                    context,
-                    f"telegram_{chat_id}_{business_id or 'default'}",
-                )
-            except Exception:
-                logger.exception("Failed to process Telegram photo with AI.")
+            # Telegram includes multiple sizes; the last item is usually the largest.
+            photo = photos[-1]
+            image_bytes = await asyncio.to_thread(
+                download_telegram_photo,
+                photo.get("file_id"),
+            )
+
+            if not image_bytes:
                 reply = (
-                    "وصلتني الصورة، لكن تعذّر تحليلها الآن. "
-                    "يرجى المحاولة مرة أخرى أو كتابة سؤالك نصيًا."
+                    "عذرًا، لم أتمكن من تحميل الصورة أو أن حجمها أكبر من الحد المسموح. "
+                    "أرسل صورة أصغر من 10 ميجابايت وحاول مجددًا."
                 )
+            else:
+                try:
+                    context = await asyncio.to_thread(get_business_context, business_id)
+                    prompt = caption or (
+                        "حلّل الصورة المرسلة من العميل، واشرح ما يظهر فيها "
+                        "وساعده اعتمادًا على معلومات النشاط التجاري."
+                    )
+                    reply = await asyncio.to_thread(
+                        generate_ai_response,
+                        f"telegram_{chat_id}",
+                        prompt,
+                        image_bytes,
+                        context,
+                        f"telegram_{chat_id}_{business_id}",
+                    )
+                except Exception:
+                    logger.exception("Failed to process Telegram photo with AI.")
+                    reply = (
+                        "وصلتني الصورة، لكن تعذّر تحليلها الآن. "
+                        "يرجى المحاولة مرة أخرى أو كتابة سؤالك نصيًا."
+                    )
 
     elif audio_attachment:
         audio_result = await asyncio.to_thread(
@@ -1466,13 +1487,13 @@ async def receive_webhook(request: Request):
         )
 
     try:
-        context = await asyncio.to_thread(
-            get_whatsapp_business_context
-        )
-
         for entry in body.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
+                metadata = value.get("metadata") or {}
+                inbound_phone_number_id = str(
+                    metadata.get("phone_number_id") or PHONE_NUMBER_ID or ""
+                ).strip()
 
                 for message in value.get("messages", []):
                     from_number = message.get("from")
@@ -1480,6 +1501,18 @@ async def receive_webhook(request: Request):
 
                     if not from_number:
                         continue
+
+                    business_id = await asyncio.to_thread(
+                        get_whatsapp_business_id, inbound_phone_number_id
+                    )
+                    if not business_id:
+                        logger.warning(
+                            "Ignoring WhatsApp message because phone number %s "
+                            "is not mapped to a business.",
+                            inbound_phone_number_id or "(missing)",
+                        )
+                        continue
+                    context = await asyncio.to_thread(get_business_context, business_id)
 
                     user_text = ""
                     image_bytes = None
@@ -1507,6 +1540,7 @@ async def receive_webhook(request: Request):
                                 send_whatsapp_message,
                                 from_number,
                                 "عذرًا، لم أتمكن من تحميل الصورة.",
+                                inbound_phone_number_id,
                             )
                             continue
 
@@ -1566,6 +1600,7 @@ async def receive_webhook(request: Request):
                         send_whatsapp_message,
                         from_number,
                         ai_reply,
+                        inbound_phone_number_id,
                     )
 
     except Exception:
