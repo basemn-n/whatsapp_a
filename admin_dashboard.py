@@ -2,15 +2,107 @@ import requests
 import os
 import hmac
 import logging
+import hashlib
+import secrets
+import base64
+import json
+import time
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 
-security = HTTPBasic()
+security = HTTPBasic(auto_error=False)
 logger = logging.getLogger(__name__)
+
+MERCHANT_SESSION_SECONDS = 8 * 60 * 60
+
+
+class MerchantLogin(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class MerchantAccountCreate(BaseModel):
+    business_id: str
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=12, max_length=256)
+
+
+def _merchant_session_secret():
+    return os.getenv("MERCHANT_SESSION_SECRET", "")
+
+
+def _password_hash(password: str, salt: bytes = None):
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.scrypt(
+        password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=32
+    )
+    return (
+        base64.urlsafe_b64encode(salt).decode("ascii").rstrip("=")
+        + "$"
+        + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    )
+
+
+def _password_matches(password: str, encoded: str):
+    try:
+        salt_part, digest_part = encoded.split("$", 1)
+        salt = base64.urlsafe_b64decode(salt_part + "=" * (-len(salt_part) % 4))
+        expected = base64.urlsafe_b64decode(digest_part + "=" * (-len(digest_part) % 4))
+        actual = hashlib.scrypt(
+            password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=32
+        )
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def _issue_merchant_token(email: str, business_id: str):
+    secret = _merchant_session_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="إعداد MERCHANT_SESSION_SECRET غير مكتمل في Render",
+        )
+    payload = {
+        "email": email,
+        "business_id": business_id,
+        "exp": int(time.time()) + MERCHANT_SESSION_SECONDS,
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    signature = hmac.new(secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).digest()
+    signed = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return encoded + "." + signed
+
+
+def _read_merchant_token(token: str):
+    secret = _merchant_session_secret()
+    if not secret or not token or "." not in token:
+        return None
+    try:
+        encoded, supplied_signature = token.split(".", 1)
+        expected_signature = hmac.new(
+            secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
+        ).digest()
+        supplied = base64.urlsafe_b64decode(
+            supplied_signature + "=" * (-len(supplied_signature) % 4)
+        )
+        if not hmac.compare_digest(expected_signature, supplied):
+            return None
+        raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        payload = json.loads(raw.decode("utf-8"))
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        if not payload.get("email") or not payload.get("business_id"):
+            return None
+        return payload
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
 
 STATUSES = {
     "pending": "قيد المراجعة",
@@ -97,32 +189,146 @@ def create_admin_router(supabase):
     router = APIRouter()
 
     def check_admin(
+        request: Request,
         credentials: HTTPBasicCredentials = Depends(security),
     ):
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            payload = _read_merchant_token(authorization[7:].strip())
+            if not payload:
+                raise HTTPException(
+                    status_code=401,
+                    detail="انتهت جلسة التاجر أو أنها غير صالحة. سجّل الدخول مجددًا.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            try:
+                account = (
+                    supabase.table("merchant_accounts")
+                    .select("email, business_id, is_active")
+                    .eq("email", payload["email"].lower())
+                    .eq("business_id", payload["business_id"])
+                    .eq("is_active", True)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception:
+                logger.exception("تعذر التحقق من حساب التاجر.")
+                raise HTTPException(status_code=503, detail="تعذر التحقق من حساب التاجر")
+            if not account.data:
+                raise HTTPException(status_code=401, detail="حساب التاجر غير نشط")
+            return {
+                "role": "merchant",
+                "email": payload["email"].lower(),
+                "business_id": str(payload["business_id"]),
+            }
+
         username = os.getenv("ADMIN_USERNAME", "")
         password = os.getenv("ADMIN_PASSWORD", "")
-
         if not username or not password:
             raise HTTPException(
                 status_code=503,
                 detail="إعداد بيانات دخول المدير غير مكتمل",
             )
-
-        valid_user = hmac.compare_digest(
-            credentials.username, username
-        )
-        valid_password = hmac.compare_digest(
-            credentials.password, password
-        )
-
+        if credentials is None:
+            raise HTTPException(
+                status_code=401,
+                detail="يلزم تسجيل الدخول",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        valid_user = hmac.compare_digest(credentials.username, username)
+        valid_password = hmac.compare_digest(credentials.password, password)
         if not (valid_user and valid_password):
             raise HTTPException(
                 status_code=401,
                 detail="بيانات الدخول غير صحيحة",
                 headers={"WWW-Authenticate": "Basic"},
             )
+        return {"role": "admin", "business_id": None}
 
-        return True
+    def ensure_business_access(business_id, actor):
+        if actor.get("role") == "admin":
+            return
+        if str(actor.get("business_id") or "") != str(business_id or ""):
+            raise HTTPException(
+                status_code=403,
+                detail="لا تملك صلاحية الوصول إلى بيانات هذا النشاط التجاري",
+            )
+
+    @router.post("/api/merchant/login")
+    def merchant_login(payload: MerchantLogin):
+        if not _merchant_session_secret():
+            raise HTTPException(
+                status_code=503,
+                detail="يلزم إعداد MERCHANT_SESSION_SECRET في Render قبل تفعيل حسابات التجار",
+            )
+        email = payload.email.strip().lower()
+        if "@" not in email:
+            raise HTTPException(status_code=401, detail="البريد الإلكتروني أو كلمة المرور غير صحيحة")
+        try:
+            result = (
+                supabase.table("merchant_accounts")
+                .select("email, business_id, password_hash, is_active")
+                .eq("email", email)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            logger.exception("تعذر البحث عن حساب التاجر.")
+            raise HTTPException(
+                status_code=503,
+                detail="جدول حسابات التجار غير جاهز. نفّذ ملف SQL الخاص بحسابات التجار أولًا.",
+            )
+        account = result.data[0] if result.data else None
+        if not account or not _password_matches(payload.password, account.get("password_hash", "")):
+            raise HTTPException(status_code=401, detail="البريد الإلكتروني أو كلمة المرور غير صحيحة")
+        token = _issue_merchant_token(email, str(account["business_id"]))
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_in": MERCHANT_SESSION_SECONDS,
+            "business_id": str(account["business_id"]),
+        }
+
+    @router.post("/api/admin/merchant-accounts")
+    def create_merchant_account(
+        payload: MerchantAccountCreate,
+        actor=Depends(check_admin),
+    ):
+        if actor.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="إنشاء حسابات التجار متاح للمدير العام فقط")
+        if not _merchant_session_secret():
+            raise HTTPException(
+                status_code=503,
+                detail="أضف MERCHANT_SESSION_SECRET إلى Render قبل إنشاء حسابات التجار",
+            )
+        get_business_or_404(payload.business_id)
+        email = payload.email.strip().lower()
+        if "@" not in email:
+            raise HTTPException(status_code=400, detail="أدخل بريدًا إلكترونيًا صحيحًا")
+        try:
+            result = (
+                supabase.table("merchant_accounts")
+                .insert({
+                    "business_id": payload.business_id,
+                    "email": email,
+                    "password_hash": _password_hash(payload.password),
+                    "is_active": True,
+                })
+                .select("id, business_id, email, is_active, created_at")
+                .execute()
+            )
+            if not result.data:
+                raise HTTPException(status_code=500, detail="لم يُنشأ حساب التاجر")
+            return {"success": True, "account": result.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر إنشاء حساب التاجر.")
+            raise HTTPException(
+                status_code=409,
+                detail="تعذر إنشاء الحساب. قد يكون البريد مستخدمًا مسبقًا أو أن جدول حسابات التجار غير مُعد.",
+            )
 
     def get_business_or_404(business_id):
         try:
@@ -229,9 +435,10 @@ td select{max-width:180px;background:white}
 <h2>لوحة إدارة المتجر</h2>
 <p>إدارة الطلبات والمنتجات المحفوظة في قاعدة البيانات.</p>
 
-<div class="toolbar" style="margin-top:16px">
+<div class="toolbar" id="businessToolbar" style="margin-top:16px">
 <label for="businessSelect">النشاط التجاري الذي تعمل عليه اللوحة:</label>
 <select id="businessSelect"></select>
+<button id="createMerchantAccountBtn" class="secondary hidden" onclick="createMerchantAccount()">إنشاء حساب تاجر</button>
 </div>
 
 <div class="tabs">
@@ -418,6 +625,7 @@ const labels = {
 };
 
 let auth = "";
+let isMerchantSession = false;
 let businesses = [];
 let currentProducts = [];
 let allOrders = [];
@@ -471,17 +679,28 @@ async function api(url, options = {}) {
 }
 
 async function login() {
-  const username = prompt("اسم المستخدم الإداري");
+  const username = prompt("للمدير: اسم المستخدم الإداري. للتاجر: البريد الإلكتروني المسجل له.");
   if (username === null) return false;
-
-  const password = prompt("كلمة المرور الإدارية");
+  const password = prompt("كلمة المرور");
   if (password === null) return false;
 
-  auth = "Basic " + btoa(
-    unescape(encodeURIComponent(username + ":" + password))
-  );
-
   try {
+    if (username.includes("@")) {
+      const response = await fetch("/api/merchant/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({email: username.trim(), password})
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw Error(data.detail || "تعذر تسجيل الدخول.");
+      auth = "Bearer " + data.access_token;
+      isMerchantSession = true;
+    } else {
+      auth = "Basic " + btoa(
+        unescape(encodeURIComponent(username + ":" + password))
+      );
+      isMerchantSession = false;
+    }
     await api("/api/admin/businesses");
     return true;
   } catch (error) {
@@ -763,6 +982,8 @@ async function loadBusinesses() {
     businesses = data.businesses || [];
 
     const select = document.getElementById("businessSelect");
+    document.getElementById("businessToolbar").classList.toggle("hidden", isMerchantSession);
+    document.getElementById("createMerchantAccountBtn").classList.toggle("hidden", isMerchantSession);
     const previous = select.value;
 
     select.replaceChildren();
@@ -787,6 +1008,35 @@ async function loadBusinesses() {
 
     updateTelegramCustomerLink();
     await loadProducts();
+  } catch (error) {
+    setMessage(error.message);
+  }
+}
+
+async function createMerchantAccount() {
+  if (isMerchantSession) {
+    setMessage("إنشاء حسابات التجار متاح للمدير العام فقط.");
+    return;
+  }
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) {
+    setMessage("اختر النشاط التجاري الذي تريد إنشاء حساب له.");
+    return;
+  }
+  const email = prompt("أدخل البريد الإلكتروني الذي سيستخدمه التاجر لتسجيل الدخول:");
+  if (email === null) return;
+  const password = prompt("أنشئ كلمة مرور قوية للتاجر (12 حرفًا على الأقل). سلّمها له بطريقة آمنة:");
+  if (password === null) return;
+  if (password.length < 12) {
+    setMessage("يجب أن تكون كلمة المرور 12 حرفًا على الأقل.");
+    return;
+  }
+  try {
+    const result = await api("/api/admin/merchant-accounts", {
+      method: "POST",
+      body: JSON.stringify({business_id: businessId, email: email.trim(), password})
+    });
+    setMessage("تم إنشاء حساب التاجر: " + result.account.email + ". سلّم بيانات الدخول للتاجر بطريقة آمنة.");
   } catch (error) {
     setMessage(error.message);
   }
@@ -984,16 +1234,25 @@ loadOrders();
 
     @router.get("/api/admin/businesses")
     def list_businesses(
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
     ):
         try:
-            result = (
-                supabase.table("businesses")
-                .select("id, name")
-                .order("name")
-                .limit(500)
-                .execute()
-            )
+            if _admin.get("role") == "merchant":
+                result = (
+                    supabase.table("businesses")
+                    .select("id, name")
+                    .eq("id", _admin["business_id"])
+                    .limit(1)
+                    .execute()
+                )
+            else:
+                result = (
+                    supabase.table("businesses")
+                    .select("id, name")
+                    .order("name")
+                    .limit(500)
+                    .execute()
+                )
             return {"businesses": result.data or []}
         except Exception:
             logger.exception("تعذر تحميل الأنشطة التجارية")
@@ -1005,8 +1264,9 @@ loadOrders();
     @router.get("/api/admin/products")
     def list_products(
         business_id: str,
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
     ):
+        ensure_business_access(business_id, _admin)
         get_business_or_404(business_id)
 
         try:
@@ -1032,8 +1292,9 @@ loadOrders();
     @router.post("/api/admin/products")
     def create_product(
         payload: ProductCreate,
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
     ):
+        ensure_business_access(payload.business_id, _admin)
         get_business_or_404(payload.business_id)
 
         name = payload.name.strip()
@@ -1085,8 +1346,9 @@ loadOrders();
         product_id: str,
         payload: ProductUpdate,
         business_id: str,
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
     ):
+        ensure_business_access(business_id, _admin)
         get_business_or_404(business_id)
 
         name = payload.name.strip()
@@ -1133,9 +1395,10 @@ loadOrders();
     @router.get("/api/admin/orders")
     def list_orders(
         business_id: str,
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
         status: str = "",
     ):
+        ensure_business_access(business_id, _admin)
         get_business_or_404(business_id)
         if status and status not in STATUSES:
             raise HTTPException(
@@ -1167,8 +1430,9 @@ loadOrders();
     @router.get("/api/admin/reports/sales")
     def sales_report(
         business_id: str,
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
     ):
+        ensure_business_access(business_id, _admin)
         get_business_or_404(business_id)
         """Summarize recent orders and distinguish saved revenue from estimates."""
         try:
@@ -1268,8 +1532,9 @@ loadOrders();
         order_id: str,
         payload: StatusUpdate,
         business_id: str,
-        _admin: bool = Depends(check_admin),
+        _admin=Depends(check_admin),
     ):
+        ensure_business_access(business_id, _admin)
         get_business_or_404(business_id)
         if payload.status not in STATUSES:
             raise HTTPException(
