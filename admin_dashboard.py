@@ -317,6 +317,12 @@ onclick="showTab('reports')">تقارير المبيعات</button>
 <select id="businessSelect"></select>
 <button onclick="loadProducts()">تحديث المنتجات</button>
 </div>
+<div class="panel">
+  <strong>رابط العملاء لفتح مساعد المتجر في Telegram</strong>
+  <p>انسخ هذا الرابط وضعه في وصف قناة المنتجات أو في منشور مثبت. يجب أن يضغط العميل عليه ثم يضغط Start في البوت.</p>
+  <p id="telegramCustomerLink">اختر النشاط التجاري لعرض الرابط.</p>
+  <button type="button" class="secondary" onclick="copyTelegramLink()">نسخ رابط العملاء</button>
+</div>
 
 <div class="panel">
 <h3 id="formTitle">إضافة منتج جديد</h3>
@@ -697,6 +703,42 @@ async function loadReports() {
   }
 }
 
+const telegramBotUsername = "SmartCustomerHelp2026Bot";
+
+function updateTelegramCustomerLink() {
+  const businessId = document.getElementById("businessSelect").value;
+  const container = document.getElementById("telegramCustomerLink");
+  container.replaceChildren();
+  if (!businessId) {
+    container.textContent = "اختر النشاط التجاري لعرض الرابط.";
+    return;
+  }
+  const url = "https://t.me/" + telegramBotUsername +
+    "?start=" + encodeURIComponent(businessId);
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = url;
+  container.appendChild(link);
+}
+
+async function copyTelegramLink() {
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) {
+    setMessage("اختر النشاط التجاري أولًا.");
+    return;
+  }
+  const url = "https://t.me/" + telegramBotUsername +
+    "?start=" + encodeURIComponent(businessId);
+  try {
+    await navigator.clipboard.writeText(url);
+    setMessage("تم نسخ رابط العملاء.");
+  } catch (error) {
+    setMessage("تعذر النسخ التلقائي. انسخ الرابط الظاهر يدويًا.");
+  }
+}
+
 /* الأنشطة التجارية */
 async function loadBusinesses() {
   try {
@@ -726,9 +768,11 @@ async function loadBusinesses() {
     if (!businesses.length) {
       setMessage("لا توجد أنشطة تجارية متاحة.");
       document.getElementById("productRows").replaceChildren();
+      updateTelegramCustomerLink();
       return;
     }
 
+    updateTelegramCustomerLink();
     await loadProducts();
   } catch (error) {
     setMessage(error.message);
@@ -907,6 +951,7 @@ document.getElementById("productForm")
 document.getElementById("businessSelect")
   .addEventListener("change", () => {
     resetProductForm();
+    updateTelegramCustomerLink();
     loadProducts();
   });
 
