@@ -28,7 +28,7 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
-TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv("TELEGRAM_PRODUCTS_BUSINESS_ID", "").strip()
+TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv("TELEGRAM_PRODUCTS_BUSINESS_ID", "68194d49-7ba4-4f49-867e-338b048d63e1").strip()
 TELEGRAM_PRODUCTS_CURRENCY = os.getenv("TELEGRAM_PRODUCTS_CURRENCY", "YER").strip().upper()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -1165,7 +1165,17 @@ async def process_telegram_update(update: dict):
         source_chat = source_post.get("chat") or {}
         source_chat_id = str(source_chat.get("id", ""))
         configured_chat_id = TELEGRAM_PRODUCTS_CHAT_ID
-        if configured_chat_id and source_chat_id == configured_chat_id:
+        configured_username = (
+            configured_chat_id.lstrip("@").casefold()
+            if configured_chat_id and not configured_chat_id.lstrip("-").isdigit()
+            else ""
+        )
+        source_username = str(source_chat.get("username") or "").casefold()
+        matches_source = (
+            configured_chat_id == source_chat_id
+            or (configured_username and source_username == configured_username)
+        )
+        if configured_chat_id and matches_source:
             if not TELEGRAM_PRODUCTS_BUSINESS_ID:
                 logger.error(
                     "Telegram product import is enabled but TELEGRAM_PRODUCTS_BUSINESS_ID is missing."
