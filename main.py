@@ -895,6 +895,44 @@ else:
 # Telegram webhook
 # -----------------------------
 
+# Telegram may redeliver an update when webhook processing is slow.
+# Keep a bounded in-process cache to avoid replying twice to recent duplicates.
+telegram_update_lock = threading.Lock()
+telegram_updates_in_progress = set()
+telegram_updates_processed = set()
+telegram_updates_processed_order = []
+TELEGRAM_UPDATE_CACHE_LIMIT = 2000
+
+
+def claim_telegram_update(update_id):
+    if update_id is None:
+        return True
+
+    key = str(update_id)
+    with telegram_update_lock:
+        if key in telegram_updates_processed or key in telegram_updates_in_progress:
+            return False
+        telegram_updates_in_progress.add(key)
+        return True
+
+
+def finish_telegram_update(update_id):
+    if update_id is None:
+        return
+
+    key = str(update_id)
+    with telegram_update_lock:
+        telegram_updates_in_progress.discard(key)
+        if key in telegram_updates_processed:
+            return
+        telegram_updates_processed.add(key)
+        telegram_updates_processed_order.append(key)
+
+        while len(telegram_updates_processed_order) > TELEGRAM_UPDATE_CACHE_LIMIT:
+            oldest = telegram_updates_processed_order.pop(0)
+            telegram_updates_processed.discard(oldest)
+
+
 def download_telegram_photo(file_id: str):
     """Download and validate a Telegram photo, with a 10 MB processing limit."""
     if not TELEGRAM_BOT_TOKEN or not file_id:
@@ -1236,10 +1274,17 @@ async def receive_telegram_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body.")
 
+    update_id = update.get("update_id")
+    if not claim_telegram_update(update_id):
+        logger.info("Ignoring duplicate Telegram update (update_id=%s).", update_id)
+        return {"ok": True, "duplicate": True}
+
     try:
         await process_telegram_update(update)
     except Exception:
         logger.exception("Failed to process Telegram webhook update.")
+    finally:
+        finish_telegram_update(update_id)
 
     return {"ok": True}
 
