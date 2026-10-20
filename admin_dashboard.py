@@ -364,76 +364,83 @@ def create_admin_router(supabase):
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>لوحة إدارة المتجر</title>
 <style>
+:root{--ink:#182338;--muted:#66758b;--brand:#3157d5;--brand-dark:#243fa8;--line:#e4eaf3;--surface:#fff;--canvas:#f5f7fc;--success:#0d8057;--danger:#b42318}
 *{box-sizing:border-box}
-body{font-family:Arial,sans-serif;background:#f2f5fa;margin:0;padding:18px;color:#182238}
-main{max-width:1450px;margin:auto}
-h2{margin-bottom:8px}
-button,select,input,textarea{font:inherit;padding:10px;border:1px solid #cbd5e1;border-radius:7px}
-button{cursor:pointer;background:#1559a8;color:white;border:0}
-button:disabled{opacity:.5;cursor:wait}
-input,textarea{width:100%;background:white}
-label{display:block;margin:10px 0 5px}
-.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}
-.tabs button{background:#64748b}
-.tabs button.active{background:#1559a8}
-.panel{background:white;border-radius:12px;padding:16px;margin-bottom:18px}
-.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
-.toolbar select{max-width:100%;background:white}
+body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;background:linear-gradient(180deg,#edf2ff 0,#f7f9fd 260px,var(--canvas) 100%);margin:0;padding:24px;color:var(--ink);line-height:1.65}
+main{max-width:1440px;margin:auto}
+h2{margin:0 0 6px;font-size:clamp(24px,3vw,34px);letter-spacing:-.5px}
+h3{margin:0 0 12px;font-size:21px}
+h4{margin:0 0 10px}
+p{color:var(--muted);margin:7px 0 14px}
+button,select,input,textarea{font:inherit;padding:11px 13px;border:1px solid #d4ddec;border-radius:10px}
+button{cursor:pointer;background:var(--brand);color:#fff;border:1px solid transparent;font-weight:650;transition:background .18s,transform .18s}
+button:hover{background:var(--brand-dark);transform:translateY(-1px)}
+button:disabled{opacity:.5;cursor:wait;transform:none}
+input,textarea,select{width:100%;background:#fff;color:var(--ink);outline:none}
+input:focus,textarea:focus,select:focus{border-color:#7b94f2;box-shadow:0 0 0 3px #3157d51c}
+label{display:block;margin:10px 0 5px;font-size:14px;font-weight:650;color:#34425a}
+.page-head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 24px;background:linear-gradient(120deg,#202f78,#3157d5 65%,#6685ef);border-radius:22px;color:#fff;box-shadow:0 14px 34px #2945a51c}
+.page-head p{color:#e2e9ff;margin:4px 0 0}
+.brand-mark{display:flex;align-items:center;gap:14px}
+.brand-icon{display:grid;place-items:center;width:54px;height:54px;border-radius:17px;background:#ffffff22;border:1px solid #ffffff35;font-size:26px}
+.head-actions{display:flex;gap:9px;align-items:center}
+.head-actions button{background:#ffffff1c;border-color:#ffffff55}
+.head-actions button:hover{background:#ffffff30}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
+.toolbar select{max-width:100%;width:auto;min-width:210px}
 .toolbar label{margin:0}
-.wrap{overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px}
-table{width:100%;border-collapse:collapse;min-width:850px}
-th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;vertical-align:middle}
-th{background:#eaf0f8}
-td select{max-width:180px;background:white}
-#msg{margin:12px 0;white-space:pre-wrap}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.full{grid-column:1/-1}
-.form-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
-.secondary{background:#64748b}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 14px;padding:7px;background:#e9eef9;border:1px solid #e1e8f5;border-radius:14px}
+.tabs button{background:transparent;color:#53627c;border:0;padding:12px 18px}
+.tabs button:hover{background:#fff;color:var(--brand);transform:none}
+.tabs button.active{background:#fff;color:var(--brand);box-shadow:0 3px 12px #1b347512}
+.panel{background:var(--surface);border:1px solid var(--line);box-shadow:0 5px 20px #1f355708;border-radius:18px;padding:22px;margin-bottom:18px}
+.toolbar .secondary,.secondary{background:#eef2ff;color:#2e49b3;border:1px solid #dce4ff}
+.toolbar .secondary:hover,.secondary:hover{background:#dfe7ff}
 .danger{background:#b42318}
-.status-on{color:#087443;font-weight:bold}
-.status-off{color:#b42318;font-weight:bold}
+.status-on{color:var(--success);font-weight:700}
+.status-off{color:var(--danger);font-weight:700}
 .hidden{display:none!important}
-.stats{
-  display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:12px;
-  margin:16px 0;
-}
-.stat-card{
-  background:#fff;
-  border:1px solid #e2e8f0;
-  border-radius:10px;
-  padding:16px;
-}
-.stat-card span{
-  display:block;
-  color:#64748b;
-  font-size:14px;
-  margin-bottom:10px;
-}
-.stat-card strong{
-  display:block;
-  font-size:26px;
-  color:#1559a8;
-}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}
+.stat-card{background:linear-gradient(145deg,#fff,#f9fbff);border:1px solid var(--line);border-radius:16px;padding:19px;min-width:0}
+.stat-card span{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}
+.stat-card strong{display:block;font-size:clamp(24px,3vw,32px);color:var(--brand);line-height:1.2}
 .search-box{min-width:250px;flex:1}
 #orderSearch{width:100%}
-@media(max-width:800px){
-  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-}
-@media(max-width:650px){
-  body{padding:9px}
-  .grid{grid-template-columns:1fr}
-  .full{grid-column:auto}
-  .panel{padding:11px}
-}
+.wrap{overflow-x:auto;border:1px solid var(--line);border-radius:13px;background:#fff}
+table{width:100%;border-collapse:collapse;min-width:850px}
+th,td{padding:13px 12px;border-bottom:1px solid #edf0f6;text-align:right;vertical-align:middle}
+th{background:#f4f7fc;color:#4b5b75;font-size:13px;font-weight:750;white-space:nowrap}
+tbody tr:hover{background:#fafbff}
+td select{max-width:180px;background:white}
+#msg{margin:14px 0;padding:12px 15px;background:#eef4ff;color:#314c9c;border:1px solid #dce7ff;border-radius:12px;white-space:pre-wrap}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.full{grid-column:1/-1}
+.form-actions{display:flex;gap:9px;margin-top:16px;flex-wrap:wrap}
+#telegramCustomerLink a{color:var(--brand);overflow-wrap:anywhere}
+#telegramCustomerLink{font-size:14px}
+.sub-panel{background:#f8faff;border:1px solid #e6ecf8;border-radius:15px;padding:18px;margin:16px 0}
+#productForm{margin-top:10px}
+.login-overlay{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:#111b34a8;backdrop-filter:blur(7px)}
+.login-card{width:min(100%,440px);background:#fff;border:1px solid #e5eaf4;border-radius:24px;padding:28px;box-shadow:0 24px 80px #0b173d40}
+.login-logo{width:58px;height:58px;border-radius:18px;display:grid;place-items:center;background:#edf1ff;color:var(--brand);font-size:28px;margin-bottom:14px}
+.login-card h2{font-size:25px}
+.login-card p{margin-bottom:18px}
+.login-card button{width:100%;margin-top:18px;padding:13px}
+.login-error{color:var(--danger);font-size:14px;margin-top:12px;min-height:20px}
+.login-foot{font-size:12px;color:#7b879b;text-align:center;margin-top:15px}
+@media(max-width:800px){body{padding:12px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.page-head{padding:18px;align-items:flex-start}.head-actions{flex-direction:column}}
+@media(max-width:560px){body{padding:8px}.page-head{border-radius:16px;flex-direction:column}.brand-icon{width:45px;height:45px}.tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.tabs button{padding:10px 5px;font-size:13px}.grid{grid-template-columns:1fr}.full{grid-column:auto}.panel{padding:14px;border-radius:14px}.stats{gap:8px}.stat-card{padding:13px}.toolbar select{width:100%}.search-box{min-width:100%}.login-card{padding:22px}}
 </style>
 </head>
 <body>
 <main>
-<h2>لوحة إدارة المتجر</h2>
-<p>إدارة الطلبات والمنتجات المحفوظة في قاعدة البيانات.</p>
+<header class="page-head">
+  <div class="brand-mark">
+    <div class="brand-icon" aria-hidden="true">▦</div>
+    <div><h2>إدارة المتجر</h2><p>مساحة عملك لإدارة الطلبات والمنتجات والمبيعات من مكان واحد.</p></div>
+  </div>
+  <div class="head-actions"><button type="button" onclick="openLogin()" id="accountBtn">تسجيل الدخول</button><button type="button" onclick="logout()" id="logoutBtn" class="hidden">تسجيل الخروج</button></div>
+</header>
 
 <div class="toolbar" id="businessToolbar" style="margin-top:16px">
 <label for="businessSelect">النشاط التجاري الذي تعمل عليه اللوحة:</label>
@@ -450,7 +457,7 @@ onclick="showTab('products')">المنتجات</button>
 onclick="showTab('reports')">تقارير المبيعات</button>
 </div>
 
-<div id="msg" role="status">جارٍ الاتصال...</div>
+<div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
 
 <section id="ordersPanel" class="panel">
 <h3>إدارة طلبات العملاء</h3>
@@ -525,14 +532,14 @@ onclick="showTab('reports')">تقارير المبيعات</button>
 <p>اختر النشاط التجاري الذي تريد إدارة منتجاته.</p>
 
 <div class="toolbar"><button onclick="loadProducts()">تحديث المنتجات</button></div>
-<div class="panel">
+<div class="sub-panel">
   <strong>رابط العملاء لفتح مساعد المتجر في Telegram</strong>
   <p>انسخ هذا الرابط وضعه في وصف قناة المنتجات أو في منشور مثبت. يجب أن يضغط العميل عليه ثم يضغط Start في البوت.</p>
   <p id="telegramCustomerLink">اختر النشاط التجاري لعرض الرابط.</p>
   <button type="button" class="secondary" onclick="copyTelegramLink()">نسخ رابط العملاء</button>
 </div>
 
-<div class="panel">
+<div class="sub-panel">
 <h3 id="formTitle">إضافة منتج جديد</h3>
 
 <form id="productForm">
@@ -614,6 +621,26 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 </section>
 </main>
 
+<div id="loginOverlay" class="login-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <form id="loginForm" class="login-card">
+    <div class="login-logo" aria-hidden="true">▦</div>
+    <h2 id="loginTitle">مرحبًا بعودتك</h2>
+    <p>سجّل الدخول للانتقال إلى لوحة إدارة متجرك.</p>
+    <label for="loginType">نوع الحساب</label>
+    <select id="loginType">
+      <option value="admin">المدير العام</option>
+      <option value="merchant">التاجر</option>
+    </select>
+    <label for="loginUsername">اسم المستخدم</label>
+    <input id="loginUsername" autocomplete="username" required minlength="3" placeholder="أدخل اسم المستخدم">
+    <label for="loginPassword">كلمة المرور</label>
+    <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="أدخل كلمة المرور">
+    <div id="loginError" class="login-error" role="alert"></div>
+    <button id="loginSubmit" type="submit">دخول إلى لوحة الإدارة</button>
+    <div class="login-foot">يتم عرض بيانات المتجر بحسب صلاحية الحساب.</div>
+  </form>
+</div>
+
 <script>
 const labels = {
   pending: "قيد المراجعة",
@@ -624,8 +651,9 @@ const labels = {
   cancelled: "ملغي"
 };
 
-let auth = "";
-let isMerchantSession = false;
+let auth = sessionStorage.getItem("store_admin_auth") || "";
+let isMerchantSession = sessionStorage.getItem("store_admin_role") === "merchant";
+let loginResolver = null;
 let businesses = [];
 let currentProducts = [];
 let allOrders = [];
@@ -662,9 +690,12 @@ async function api(url, options = {}) {
 
   if (response.status === 401) {
     auth = "";
-    throw Error(
-      "انتهت صلاحية تسجيل الدخول أو بيانات الدخول غير صحيحة. حدّث الصفحة وسجّل الدخول مجددًا."
-    );
+    isMerchantSession = false;
+    sessionStorage.removeItem("store_admin_auth");
+    sessionStorage.removeItem("store_admin_role");
+    document.getElementById("logoutBtn").classList.add("hidden");
+    document.getElementById("accountBtn").classList.remove("hidden");
+    throw Error("انتهت الجلسة أو رُفضت بيانات الدخول. سجّل الدخول مجددًا.");
   }
 
   const data = await response.json().catch(() => ({}));
@@ -678,41 +709,90 @@ async function api(url, options = {}) {
   return data;
 }
 
-async function login() {
-  const loginType = prompt("نوع الدخول:\n1 = المدير العام\n2 = التاجر");
-  if (loginType === null) return false;
-  const username = prompt(loginType.trim() === "2" ? "اسم المستخدم الخاص بالتاجر" : "اسم المستخدم الإداري");
-  if (username === null) return false;
-  const password = prompt("كلمة المرور");
-  if (password === null) return false;
+function openLogin() {
+  document.getElementById("loginError").textContent = "";
+  document.getElementById("loginOverlay").classList.remove("hidden");
+  document.getElementById("loginUsername").focus();
+}
 
+function closeLogin() {
+  document.getElementById("loginOverlay").classList.add("hidden");
+}
+
+function login() {
+  openLogin();
+  return new Promise(resolve => { loginResolver = resolve; });
+}
+
+document.getElementById("loginForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const submit = document.getElementById("loginSubmit");
+  const errorBox = document.getElementById("loginError");
+  const type = document.getElementById("loginType").value;
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  errorBox.textContent = "";
+  submit.disabled = true;
+  submit.textContent = "جارٍ التحقق...";
   try {
-    if (loginType.trim() === "2") {
+    if (type === "merchant") {
       const response = await fetch("/api/merchant/login", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({username: username.trim(), password})
+        body: JSON.stringify({username, password})
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw Error(data.detail || "تعذر تسجيل الدخول.");
       auth = "Bearer " + data.access_token;
       isMerchantSession = true;
-    } else if (loginType.trim() === "1") {
-      auth = "Basic " + btoa(
-        unescape(encodeURIComponent(username + ":" + password))
-      );
-      isMerchantSession = false;
     } else {
-      throw Error("اختر 1 للمدير العام أو 2 للتاجر.");
+      auth = "Basic " + btoa(unescape(encodeURIComponent(username + ":" + password)));
+      isMerchantSession = false;
+      const response = await fetch("/api/admin/businesses", {
+        headers: {"Authorization": auth}
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw Error(data.detail || "اسم المستخدم أو كلمة المرور غير صحيحة.");
     }
-    await api("/api/admin/businesses");
-    return true;
+    sessionStorage.setItem("store_admin_auth", auth);
+    sessionStorage.setItem("store_admin_role", isMerchantSession ? "merchant" : "admin");
+    document.getElementById("accountBtn").classList.add("hidden");
+    document.getElementById("logoutBtn").classList.remove("hidden");
+    closeLogin();
+    document.getElementById("loginPassword").value = "";
+    setMessage("تم تسجيل الدخول بنجاح. جارٍ تحميل لوحة الإدارة...");
+    const resolver = loginResolver;
+    loginResolver = null;
+    if (resolver) resolver(true);
+    if (!businesses.length) await loadBusinesses();
   } catch (error) {
     auth = "";
-    setMessage(error.message);
-    return false;
+    sessionStorage.removeItem("store_admin_auth");
+    sessionStorage.removeItem("store_admin_role");
+    errorBox.textContent = error.message || "تعذر تسجيل الدخول.";
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "دخول إلى لوحة الإدارة";
   }
+});
+
+function logout() {
+  auth = "";
+  isMerchantSession = false;
+  businesses = [];
+  currentProducts = [];
+  allOrders = [];
+  sessionStorage.removeItem("store_admin_auth");
+  sessionStorage.removeItem("store_admin_role");
+  document.getElementById("businessSelect").replaceChildren();
+  document.getElementById("productRows").replaceChildren();
+  document.getElementById("orderRows").replaceChildren();
+  document.getElementById("accountBtn").classList.remove("hidden");
+  document.getElementById("logoutBtn").classList.add("hidden");
+  setMessage("تم تسجيل الخروج. سجّل الدخول للمتابعة.");
+  openLogin();
 }
+
 async function ensureLogin() {
   if (auth) return true;
   return await login();
@@ -1229,7 +1309,13 @@ document.getElementById("filter")
 document.getElementById("orderSearch")
   .addEventListener("input", renderOrders);
 
-loadOrders();
+if (auth) {
+  document.getElementById("accountBtn").classList.add("hidden");
+  document.getElementById("logoutBtn").classList.remove("hidden");
+  loadOrders();
+} else {
+  openLogin();
+}
 </script>
 </body>
 </html>
