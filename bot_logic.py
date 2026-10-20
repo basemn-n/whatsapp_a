@@ -115,6 +115,63 @@ def generate_ai_response(
 
 
 def transcribe_audio(audio_file_path: str) -> str:
-    raise RuntimeError(
-        "تحويل الصوت غير مفعّل حاليًا. يمكن للبوت استقبال النصوص بعد نجاح اختبار الاتصال."
-    )
+    """Transcribe an audio file to its spoken language using Groq Whisper."""
+    import mimetypes
+    import requests
+
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY غير مضبوط.")
+
+    if not os.path.isfile(audio_file_path):
+        raise FileNotFoundError("ملف الصوت غير موجود.")
+
+    file_size = os.path.getsize(audio_file_path)
+    if file_size == 0:
+        raise ValueError("ملف الصوت فارغ.")
+    if file_size > 25 * 1024 * 1024:
+        raise ValueError("حجم الملف الصوتي يتجاوز حد Groq البالغ 25 ميجابايت.")
+
+    model = os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo")
+    filename = os.path.basename(audio_file_path)
+    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    data = {
+        "model": model,
+        "language": "ar",
+        "response_format": "json",
+        "temperature": "0",
+        "prompt": (
+            "الكلام باللغة العربية. احتفظ بأسماء المنتجات والأرقام والأسعار "
+            "وأسماء الأشخاص كما نطقها المتحدث قدر الإمكان."
+        ),
+    }
+
+    try:
+        with open(audio_file_path, "rb") as audio_file:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                data=data,
+                files={"file": (filename, audio_file, mime_type)},
+                timeout=120,
+            )
+        if not response.ok:
+            # Do not include request headers or credentials in logs/errors.
+            detail = ""
+            try:
+                detail = str(response.json().get("error", {}).get("message", ""))
+            except (ValueError, AttributeError):
+                detail = response.text[:300]
+            raise RuntimeError(
+                f"Groq transcription failed (HTTP {response.status_code}): {detail}"
+            )
+
+        result = response.json()
+        transcript = str(result.get("text") or "").strip()
+        if not transcript:
+            raise ValueError("لم يتم التعرف على كلام واضح في الرسالة الصوتية.")
+        return transcript
+
+    except requests.RequestException as exc:
+        raise RuntimeError("تعذر الاتصال بخدمة تحويل الصوت إلى نص.") from exc
