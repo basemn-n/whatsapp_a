@@ -229,6 +229,11 @@ td select{max-width:180px;background:white}
 <h2>لوحة إدارة المتجر</h2>
 <p>إدارة الطلبات والمنتجات المحفوظة في قاعدة البيانات.</p>
 
+<div class="toolbar" style="margin-top:16px">
+<label for="businessSelect">النشاط التجاري الذي تعمل عليه اللوحة:</label>
+<select id="businessSelect"></select>
+</div>
+
 <div class="tabs">
 <button id="ordersTab" class="active"
 onclick="showTab('orders')">الطلبات</button>
@@ -312,11 +317,7 @@ onclick="showTab('reports')">تقارير المبيعات</button>
 <h3>إدارة المنتجات</h3>
 <p>اختر النشاط التجاري الذي تريد إدارة منتجاته.</p>
 
-<div class="toolbar">
-<label for="businessSelect">النشاط التجاري:</label>
-<select id="businessSelect"></select>
-<button onclick="loadProducts()">تحديث المنتجات</button>
-</div>
+<div class="toolbar"><button onclick="loadProducts()">تحديث المنتجات</button></div>
 <div class="panel">
   <strong>رابط العملاء لفتح مساعد المتجر في Telegram</strong>
   <p>انسخ هذا الرابط وضعه في وصف قناة المنتجات أو في منشور مثبت. يجب أن يضغط العميل عليه ثم يضغط Start في البوت.</p>
@@ -533,7 +534,10 @@ async function loadOrders() {
 
     setMessage("جارٍ تحميل الطلبات...");
 
-    const data = await api("/api/admin/orders");
+    if (!businesses.length) await loadBusinesses();
+    const businessId = document.getElementById("businessSelect").value;
+    if (!businessId) { setMessage("أضف نشاطًا تجاريًا أو اختر نشاطًا أولًا."); return; }
+    const data = await api("/api/admin/orders?business_id=" + encodeURIComponent(businessId));
     allOrders = Array.isArray(data.orders) ? data.orders : [];
 
     renderOrders();
@@ -636,7 +640,7 @@ function renderOrders() {
         const result = await api(
           "/api/admin/orders/" +
           encodeURIComponent(order.id) +
-          "/status",
+          "/status?business_id=" + encodeURIComponent(document.getElementById("businessSelect").value),
           {
             method: "PATCH",
             body: JSON.stringify({
@@ -690,7 +694,10 @@ async function loadReports() {
   try {
     if (!(await ensureLogin())) return;
     setMessage("جارٍ تحميل تقرير المبيعات...");
-    const data = await api("/api/admin/reports/sales");
+    if (!businesses.length) await loadBusinesses();
+    const businessId = document.getElementById("businessSelect").value;
+    if (!businessId) { setMessage("أضف نشاطًا تجاريًا أو اختر نشاطًا أولًا."); return; }
+    const data = await api("/api/admin/reports/sales?business_id=" + encodeURIComponent(businessId));
     document.getElementById("reportTotalOrders").textContent = data.total_orders ?? 0;
     document.getElementById("reportPendingOrders").textContent = data.pending_orders ?? 0;
     document.getElementById("reportProcessingOrders").textContent = data.processing_orders ?? 0;
@@ -959,6 +966,8 @@ document.getElementById("businessSelect")
     resetProductForm();
     updateTelegramCustomerLink();
     loadProducts();
+    loadOrders();
+    loadReports();
   });
 
 document.getElementById("filter")
@@ -1123,9 +1132,11 @@ loadOrders();
 
     @router.get("/api/admin/orders")
     def list_orders(
+        business_id: str,
         _admin: bool = Depends(check_admin),
         status: str = "",
     ):
+        get_business_or_404(business_id)
         if status and status not in STATUSES:
             raise HTTPException(
                 status_code=400,
@@ -1135,6 +1146,7 @@ loadOrders();
         query = (
             supabase.table("orders")
             .select("*")
+            .eq("business_id", business_id)
             .order("created_at", desc=True)
             .limit(500)
         )
@@ -1154,13 +1166,16 @@ loadOrders();
 
     @router.get("/api/admin/reports/sales")
     def sales_report(
+        business_id: str,
         _admin: bool = Depends(check_admin),
     ):
+        get_business_or_404(business_id)
         """Summarize recent orders and distinguish saved revenue from estimates."""
         try:
             order_result = (
                 supabase.table("orders")
                 .select("*")
+                .eq("business_id", business_id)
                 .order("created_at", desc=True)
                 .limit(1000)
                 .execute()
@@ -1170,6 +1185,7 @@ loadOrders();
             product_result = (
                 supabase.table("products")
                 .select("business_id, name, price, currency")
+                .eq("business_id", business_id)
                 .limit(5000)
                 .execute()
             )
@@ -1251,8 +1267,10 @@ loadOrders();
     def update_status(
         order_id: str,
         payload: StatusUpdate,
+        business_id: str,
         _admin: bool = Depends(check_admin),
     ):
+        get_business_or_404(business_id)
         if payload.status not in STATUSES:
             raise HTTPException(
                 status_code=400,
@@ -1268,6 +1286,7 @@ loadOrders();
                     "status, telegram_chat_id"
                 )
                 .eq("id", order_id)
+                .eq("business_id", business_id)
                 .limit(1)
                 .execute()
             )
@@ -1286,6 +1305,7 @@ loadOrders();
                 supabase.table("orders")
                 .update({"status": payload.status})
                 .eq("id", order_id)
+                .eq("business_id", business_id)
                 .select("*")
                 .execute()
             )
