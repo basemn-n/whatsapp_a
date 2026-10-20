@@ -494,7 +494,7 @@ def create_admin_router(supabase):
 
     @router.get("/signup", response_class=HTMLResponse)
     def merchant_signup_page():
-        return HTMLResponse(r\"\"\"
+        return HTMLResponse(r"""
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -557,7 +557,7 @@ form.addEventListener("submit",async event=>{
 </script>
 </body>
 </html>
-\"\"\")
+""")
 
     @router.post("/api/admin/merchant-accounts")
     def create_merchant_account(
