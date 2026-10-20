@@ -31,6 +31,18 @@ class MerchantAccountCreate(BaseModel):
     password: str = Field(min_length=12, max_length=256)
 
 
+class MerchantSignup(BaseModel):
+    store_name: str = Field(min_length=2, max_length=160)
+    industry: str = Field(default="", max_length=100)
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class SignupReview(BaseModel):
+    action: str
+    reason: str = Field(default="", max_length=500)
+
+
 def _merchant_session_secret():
     return os.getenv("MERCHANT_SESSION_SECRET", "")
 
@@ -290,6 +302,263 @@ def create_admin_router(supabase):
             "business_id": str(account["business_id"]),
         }
 
+    @router.post("/api/merchant/signup")
+    def submit_merchant_signup(payload: MerchantSignup):
+        store_name = payload.store_name.strip()
+        username = payload.username.strip().lower()
+        industry = payload.industry.strip()
+        if len(store_name) < 2:
+            raise HTTPException(status_code=400, detail="أدخل اسم متجر صحيحًا.")
+        if (
+            not username
+            or any(ch.isspace() for ch in username)
+            or not username.replace("_", "").replace("-", "").replace(".", "").isalnum()
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="اسم المستخدم يجب أن يحتوي على أحرف أو أرقام أو _ أو - أو . دون مسافات.",
+            )
+        try:
+            existing = (
+                supabase.table("merchant_accounts")
+                .select("id")
+                .eq("username", username)
+                .limit(1)
+                .execute()
+            )
+            pending = (
+                supabase.table("merchant_signup_requests")
+                .select("id")
+                .eq("username", username)
+                .eq("status", "pending")
+                .limit(1)
+                .execute()
+            )
+            if existing.data or pending.data:
+                raise HTTPException(
+                    status_code=409,
+                    detail="اسم المستخدم مستخدم بالفعل أو لديه طلب قيد المراجعة. اختر اسمًا آخر.",
+                )
+            result = (
+                supabase.table("merchant_signup_requests")
+                .insert({
+                    "store_name": store_name,
+                    "industry": industry,
+                    "username": username,
+                    "password_hash": _password_hash(payload.password),
+                    "status": "pending",
+                })
+                .select("id, store_name, username, status, created_at")
+                .execute()
+            )
+            if not result.data:
+                raise HTTPException(status_code=500, detail="لم نتمكن من حفظ طلب التسجيل.")
+            return {
+                "success": True,
+                "request": result.data[0],
+                "message": "تم استلام طلبك. لن تتمكن من الدخول حتى يراجع المدير العام الطلب ويوافق عليه.",
+            }
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر حفظ طلب تسجيل تاجر.")
+            raise HTTPException(
+                status_code=503,
+                detail="تعذر إرسال الطلب. تأكد من تنفيذ ترحيل merchant signup في Supabase ثم حاول مجددًا.",
+            )
+
+    @router.get("/api/admin/merchant-signup-requests")
+    def list_merchant_signup_requests(actor=Depends(check_admin)):
+        if actor.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="هذه الصفحة متاحة للمدير العام فقط.")
+        try:
+            result = (
+                supabase.table("merchant_signup_requests")
+                .select("id, store_name, industry, username, status, rejection_reason, business_id, created_at, reviewed_at")
+                .order("created_at", desc=True)
+                .limit(300)
+                .execute()
+            )
+            return {"requests": result.data or []}
+        except Exception:
+            logger.exception("تعذر تحميل طلبات تسجيل التجار.")
+            raise HTTPException(
+                status_code=503,
+                detail="تعذر تحميل طلبات التسجيل. تحقق من تنفيذ ملف SQL الخاص بطلبات التجار.",
+            )
+
+    @router.patch("/api/admin/merchant-signup-requests/{request_id}")
+    def review_merchant_signup_request(
+        request_id: str,
+        payload: SignupReview,
+        actor=Depends(check_admin),
+    ):
+        if actor.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="مراجعة طلبات التجار متاحة للمدير العام فقط.")
+        if payload.action not in ("approve", "reject"):
+            raise HTTPException(status_code=400, detail="الإجراء يجب أن يكون approve أو reject.")
+        try:
+            request_result = (
+                supabase.table("merchant_signup_requests")
+                .select("id, store_name, industry, username, password_hash, status")
+                .eq("id", request_id)
+                .limit(1)
+                .execute()
+            )
+            if not request_result.data:
+                raise HTTPException(status_code=404, detail="طلب التسجيل غير موجود.")
+            signup = request_result.data[0]
+            if signup.get("status") != "pending":
+                raise HTTPException(status_code=409, detail="تمت مراجعة هذا الطلب مسبقًا.")
+            if payload.action == "reject":
+                supabase.table("merchant_signup_requests").update({
+                    "status": "rejected",
+                    "rejection_reason": payload.reason.strip(),
+                    "reviewed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                }).eq("id", request_id).eq("status", "pending").execute()
+                return {"success": True, "status": "rejected"}
+
+            if not _merchant_session_secret():
+                raise HTTPException(
+                    status_code=503,
+                    detail="أضف MERCHANT_SESSION_SECRET إلى Render قبل الموافقة على حسابات التجار.",
+                )
+            business_id = None
+            account_id = None
+            try:
+                business_result = (
+                    supabase.table("businesses")
+                    .insert({
+                        "name": signup["store_name"],
+                        "industry": signup.get("industry") or "",
+                        "description": "",
+                    })
+                    .select("id")
+                    .execute()
+                )
+                if not business_result.data:
+                    raise RuntimeError("Business insert returned no row")
+                business_id = str(business_result.data[0]["id"])
+                account_result = (
+                    supabase.table("merchant_accounts")
+                    .insert({
+                        "business_id": business_id,
+                        "username": signup["username"],
+                        "password_hash": signup["password_hash"],
+                        "is_active": True,
+                    })
+                    .select("id")
+                    .execute()
+                )
+                if not account_result.data:
+                    raise RuntimeError("Merchant account insert returned no row")
+                account_id = account_result.data[0]["id"]
+                updated_request = (
+                    supabase.table("merchant_signup_requests")
+                    .update({
+                        "status": "approved",
+                        "business_id": business_id,
+                        "reviewed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                        "rejection_reason": "",
+                    })
+                    .eq("id", request_id)
+                    .eq("status", "pending")
+                    .execute()
+                )
+                if not updated_request.data:
+                    raise RuntimeError("Signup request status could not be updated")
+            except Exception:
+                logger.exception("تعذر إكمال الموافقة على طلب التاجر؛ جارٍ التراجع عن السجلات المنشأة.")
+                try:
+                    if account_id:
+                        supabase.table("merchant_accounts").delete().eq("id", account_id).execute()
+                    if business_id:
+                        supabase.table("businesses").delete().eq("id", business_id).execute()
+                except Exception:
+                    logger.exception("تعذر التراجع الكامل عن سجل الموافقة.")
+                raise HTTPException(
+                    status_code=500,
+                    detail="لم تكتمل الموافقة ولم يتم تأكيد تفعيل الحساب. تحقق من مخطط جدول businesses وmerchant_accounts ثم أعد المحاولة.",
+                )
+            return {
+                "success": True,
+                "status": "approved",
+                "business_id": business_id,
+                "username": signup["username"],
+            }
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر مراجعة طلب تسجيل التاجر.")
+            raise HTTPException(status_code=500, detail="تعذر تحديث حالة طلب التسجيل.")
+
+    @router.get("/signup", response_class=HTMLResponse)
+    def merchant_signup_page():
+        return HTMLResponse(r\"\"\"
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>طلب إنشاء متجر جديد</title>
+<style>
+:root{font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#182338;background:#f4f7fc}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at top right,#e4eaff,transparent 40%),#f4f7fc}
+.card{width:min(100%,520px);padding:30px;background:#fff;border:1px solid #e2e8f4;border-radius:24px;box-shadow:0 18px 55px #203b7912}
+.mark{display:grid;place-items:center;width:56px;height:56px;background:#edf1ff;color:#3157d5;border-radius:18px;font-size:26px;margin-bottom:16px}
+h1{font-size:27px;margin:0 0 8px}p{color:#68758c;line-height:1.8;margin:0 0 20px}
+label{display:block;font-weight:650;font-size:14px;margin:13px 0 6px}
+input{width:100%;padding:12px 14px;border:1px solid #d5deed;border-radius:11px;font:inherit}
+input:focus{outline:3px solid #3157d51a;border-color:#3157d5}
+button{width:100%;padding:13px;border:0;border-radius:11px;background:#3157d5;color:#fff;font:inherit;font-weight:700;cursor:pointer;margin-top:18px}
+button:disabled{opacity:.6;cursor:wait}
+.note{font-size:13px;background:#f5f7fc;border:1px solid #e6ebf5;padding:12px;border-radius:11px;margin-top:16px}
+#result{margin-top:15px;padding:12px;border-radius:10px;white-space:pre-wrap;display:none}
+#result.ok{display:block;background:#eaf8f1;color:#176744}#result.error{display:block;background:#fff0ef;color:#a12620}
+a{color:#3157d5}
+</style>
+</head>
+<body>
+<main class="card">
+<div class="mark" aria-hidden="true">▦</div>
+<h1>اطلب إنشاء متجرك</h1>
+<p>أنشئ طلبًا بحسابك وبيانات متجرك. سيقوم المدير العام بمراجعة الطلب قبل تفعيل الدخول إلى لوحة الإدارة.</p>
+<form id="signupForm">
+<label for="storeName">اسم المتجر</label><input id="storeName" required minlength="2" maxlength="160" autocomplete="organization" placeholder="مثال: متجر التقنية الذكية">
+<label for="industry">مجال النشاط (اختياري)</label><input id="industry" maxlength="100" placeholder="ملابس، إلكترونيات، أدوات منزلية...">
+<label for="username">اسم المستخدم</label><input id="username" required minlength="3" maxlength="80" pattern="[A-Za-z0-9_.-]+" autocomplete="username" placeholder="shop_ahmed">
+<label for="password">كلمة المرور</label><input id="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="12 حرفًا على الأقل">
+<label for="confirmPassword">تأكيد كلمة المرور</label><input id="confirmPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="أعد كتابة كلمة المرور">
+<button id="submitBtn" type="submit">إرسال طلب التسجيل</button>
+</form>
+<div id="result" role="status"></div>
+<div class="note">بعد الإرسال، انتظر موافقة المدير العام. لا تشارك كلمة المرور مع أي شخص. <a href="/admin">العودة إلى تسجيل الدخول</a></div>
+</main>
+<script>
+const form=document.getElementById("signupForm");
+form.addEventListener("submit",async event=>{
+ event.preventDefault();
+ const result=document.getElementById("result");
+ const button=document.getElementById("submitBtn");
+ const password=document.getElementById("password").value;
+ const confirm=document.getElementById("confirmPassword").value;
+ result.className="";result.style.display="none";
+ if(password!==confirm){result.textContent="كلمتا المرور غير متطابقتين.";result.className="error";return;}
+ button.disabled=true;button.textContent="جارٍ إرسال الطلب...";
+ try{
+  const response=await fetch("/api/merchant/signup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({store_name:document.getElementById("storeName").value.trim(),industry:document.getElementById("industry").value.trim(),username:document.getElementById("username").value.trim(),password})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.detail||"تعذر إرسال الطلب.");
+  result.textContent="تم استلام طلبك بنجاح. رقم الطلب: "+data.request.id+"\nحالة الطلب: قيد المراجعة. لن يعمل تسجيل الدخول حتى يوافق المدير العام.";
+  result.className="ok";form.reset();
+ }catch(error){result.textContent=error.message||"حدث خطأ أثناء إرسال الطلب.";result.className="error";}
+ finally{button.disabled=false;button.textContent="إرسال طلب التسجيل";}
+});
+</script>
+</body>
+</html>
+\"\"\")
+
     @router.post("/api/admin/merchant-accounts")
     def create_merchant_account(
         payload: MerchantAccountCreate,
@@ -455,6 +724,8 @@ onclick="showTab('orders')">الطلبات</button>
 onclick="showTab('products')">المنتجات</button>
 <button id="reportsTab"
 onclick="showTab('reports')">تقارير المبيعات</button>
+<button id="requestsTab" class="hidden"
+onclick="showTab('requests')">طلبات التجار</button>
 </div>
 
 <div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
@@ -619,6 +890,16 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <p id="missingRevenue">طلبات لا يمكن تقدير قيمتها: —</p>
 </div>
 </section>
+
+<section id="requestsPanel" class="panel hidden">
+  <h3>طلبات إنشاء المتاجر</h3>
+  <p>راجع معلومات النشاط واسم المستخدم قبل تفعيل حساب التاجر.</p>
+  <div class="toolbar"><button id="refreshRequestsBtn" onclick="loadSignupRequests()">تحديث الطلبات</button></div>
+  <div class="wrap"><table style="min-width:760px">
+    <thead><tr><th>المتجر</th><th>المجال</th><th>اسم المستخدم</th><th>تاريخ الطلب</th><th>الحالة</th><th>الإجراء</th></tr></thead>
+    <tbody id="signupRequestRows"></tbody>
+  </table></div>
+</section>
 </main>
 
 <div id="loginOverlay" class="login-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
@@ -637,7 +918,7 @@ onclick="resetProductForm()">إلغاء التعديل</button>
     <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="أدخل كلمة المرور">
     <div id="loginError" class="login-error" role="alert"></div>
     <button id="loginSubmit" type="submit">دخول إلى لوحة الإدارة</button>
-    <div class="login-foot">يتم عرض بيانات المتجر بحسب صلاحية الحساب.</div>
+    <div class="login-foot">يتم عرض بيانات المتجر بحسب صلاحية الحساب.<br><a href="/signup" target="_blank" rel="noopener noreferrer">طلب إنشاء متجر جديد</a></div>
   </form>
 </div>
 
@@ -809,6 +1090,8 @@ function showTab(tab) {
 
   document.getElementById("reportsPanel")
     .classList.toggle("hidden", tab !== "reports");
+  document.getElementById("requestsPanel")
+    .classList.toggle("hidden", tab !== "requests");
 
   document.getElementById("ordersTab")
     .classList.toggle("active", tab === "orders");
@@ -818,8 +1101,12 @@ function showTab(tab) {
 
   document.getElementById("reportsTab")
     .classList.toggle("active", tab === "reports");
+  document.getElementById("requestsTab")
+    .classList.toggle("active", tab === "requests");
 
-  if (tab === "products") {
+  if (tab === "requests") {
+    loadSignupRequests();
+  } else if (tab === "products") {
     loadBusinesses();
   } else if (tab === "reports") {
     loadReports();
@@ -1069,6 +1356,7 @@ async function loadBusinesses() {
     const select = document.getElementById("businessSelect");
     document.getElementById("businessToolbar").classList.toggle("hidden", isMerchantSession);
     document.getElementById("createMerchantAccountBtn").classList.toggle("hidden", isMerchantSession);
+    document.getElementById("requestsTab").classList.toggle("hidden", isMerchantSession);
     const previous = select.value;
 
     select.replaceChildren();
@@ -1095,6 +1383,89 @@ async function loadBusinesses() {
     await loadProducts();
   } catch (error) {
     setMessage(error.message);
+  }
+}
+
+async function loadSignupRequests() {
+  if (isMerchantSession) {
+    setMessage("طلبات التسجيل متاحة للمدير العام فقط.");
+    return;
+  }
+  const button = document.getElementById("refreshRequestsBtn");
+  button.disabled = true;
+  const rows = document.getElementById("signupRequestRows");
+  rows.replaceChildren();
+  try {
+    if (!(await ensureLogin())) return;
+    const data = await api("/api/admin/merchant-signup-requests");
+    const requests = Array.isArray(data.requests) ? data.requests : [];
+    if (!requests.length) {
+      const tr = document.createElement("tr");
+      const td = cell("لا توجد طلبات تسجيل.");
+      td.colSpan = 6;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+    }
+    for (const request of requests) {
+      const tr = document.createElement("tr");
+      tr.appendChild(cell(request.store_name));
+      tr.appendChild(cell(request.industry));
+      tr.appendChild(cell(request.username));
+      tr.appendChild(cell(request.created_at ? new Date(request.created_at).toLocaleString("ar") : "—"));
+      tr.appendChild(cell(request.status === "pending" ? "قيد المراجعة" : request.status === "approved" ? "تمت الموافقة" : "مرفوض"));
+      const actionCell = document.createElement("td");
+      if (request.status === "pending") {
+        const approve = document.createElement("button");
+        approve.textContent = "موافقة وتفعيل";
+        approve.addEventListener("click", async () => {
+          if (!confirm("سيتم إنشاء متجر وحساب تاجر وتفعيل الدخول. هل تريد المتابعة؟")) return;
+          approve.disabled = true;
+          try {
+            await api("/api/admin/merchant-signup-requests/" + encodeURIComponent(request.id), {
+              method: "PATCH",
+              body: JSON.stringify({action: "approve"})
+            });
+            setMessage("تمت الموافقة وإنشاء متجر للتاجر " + request.username + ".");
+            await loadSignupRequests();
+            await loadBusinesses();
+          } catch (error) {
+            setMessage(error.message);
+            approve.disabled = false;
+          }
+        });
+        actionCell.appendChild(approve);
+        const reject = document.createElement("button");
+        reject.textContent = "رفض";
+        reject.className = "danger";
+        reject.style.marginInlineStart = "6px";
+        reject.addEventListener("click", async () => {
+          const reason = prompt("سبب الرفض (اختياري):") || "";
+          if (!confirm("هل تريد رفض طلب هذا المتجر؟")) return;
+          reject.disabled = true;
+          try {
+            await api("/api/admin/merchant-signup-requests/" + encodeURIComponent(request.id), {
+              method: "PATCH",
+              body: JSON.stringify({action: "reject", reason})
+            });
+            setMessage("تم رفض طلب " + request.store_name + ".");
+            await loadSignupRequests();
+          } catch (error) {
+            setMessage(error.message);
+            reject.disabled = false;
+          }
+        });
+        actionCell.appendChild(reject);
+      } else {
+        actionCell.textContent = request.status === "approved" ? "تم تفعيل الحساب" : (request.rejection_reason || "لا يوجد إجراء");
+      }
+      tr.appendChild(actionCell);
+      rows.appendChild(tr);
+    }
+    setMessage("تم تحميل " + requests.length + " طلب تسجيل.");
+  } catch (error) {
+    setMessage(error.message);
+  } finally {
+    button.disabled = false;
   }
 }
 
