@@ -480,6 +480,17 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
     state = load_pending_telegram_order(chat_id)
 
+    # Do not mistake a product question for an answer to an unfinished order
+    # (for example, treating "أريد معرفة سعر السماعة" as the customer's name).
+    product_question_markers = (
+        "سعر", "بكم", "كم السعر", "معرفة سعر", "اعرف سعر",
+        "تفاصيل المنتج", "معلومات المنتج", "مواصفات", "هل متوفر",
+        "هل متاحة", "متوفر", "متاحة", "عندكم", "عندكم منه",
+        "لون المنتج", "ما لون", "صور المنتج",
+    )
+    if state is not None and any(marker in normalized for marker in product_question_markers):
+        return None
+
     order_intents = (
         "أريد طلب",
         "اريد طلب",
