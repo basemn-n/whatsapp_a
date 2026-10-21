@@ -93,9 +93,10 @@ def log_ai_usage(response, operation, business_id=None):
         else os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
     )
     model_name = response_metadata.get("model_name") or response_metadata.get("model") or default_model
+    rate_prefix = "GROQ_VISION" if operation == "image" else "GROQ"
     rates = {
-        "input": os.getenv("GROQ_INPUT_COST_PER_MILLION_USD"),
-        "output": os.getenv("GROQ_OUTPUT_COST_PER_MILLION_USD"),
+        "input": os.getenv(f"{rate_prefix}_INPUT_COST_PER_MILLION_USD"),
+        "output": os.getenv(f"{rate_prefix}_OUTPUT_COST_PER_MILLION_USD"),
     }
     estimated_cost = None
     try:
