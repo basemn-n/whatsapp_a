@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - "feature/**"
+      - "test/**"
 
 jobs:
   compile:
@@ -17,8 +18,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip fastapi pydantic requests
       - name: Compile application modules
         run: python -m py_compile main.py admin_dashboard.py bot_logic.py telegram_products.py
+      - name: Run merchant authorization and session tests
+        run: python -m unittest discover -s tests -v
       - name: Check embedded dashboard JavaScript syntax
         shell: bash
         run: |
