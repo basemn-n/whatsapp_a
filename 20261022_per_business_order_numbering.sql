@@ -170,7 +170,7 @@ BEGIN
      WHERE business_id = p_business_id
        AND name = p_product_name
        AND is_available = true
-     ORDER BY created_at ASC NULLS LAST, id ASC
+     ORDER BY id ASC
      LIMIT 1;
 
     IF v_product_id IS NULL THEN
