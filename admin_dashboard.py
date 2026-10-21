@@ -1948,6 +1948,54 @@ if (auth) {
 </html>
 """)
 
+    @router.get("/api/admin/ai-usage")
+    def get_ai_usage(_admin=Depends(check_admin)):
+        if _admin.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="تقارير استخدام الذكاء الاصطناعي متاحة للمدير العام فقط.")
+        try:
+            result = (
+                supabase.table("ai_usage_logs")
+                .select("created_at, business_id, provider, model, operation, input_tokens, output_tokens, total_tokens, estimated_cost_usd")
+                .order("created_at", desc=True)
+                .limit(1000)
+                .execute()
+            )
+            records = result.data or []
+            total_input = sum(int(row.get("input_tokens") or 0) for row in records)
+            total_output = sum(int(row.get("output_tokens") or 0) for row in records)
+            total_tokens = sum(int(row.get("total_tokens") or 0) for row in records)
+            priced = [
+                float(row["estimated_cost_usd"])
+                for row in records
+                if row.get("estimated_cost_usd") is not None
+            ]
+            return {
+                "sample_size": len(records),
+                "limit": 1000,
+                "input_tokens": total_input,
+                "output_tokens": total_output,
+                "total_tokens": total_tokens,
+                "estimated_cost_usd": round(sum(priced), 8) if priced else None,
+                "priced_requests": len(priced),
+                "unpriced_requests": len(records) - len(priced),
+                "recent": [
+                    {
+                        **row,
+                        "estimated_cost_usd": (
+                            float(row["estimated_cost_usd"])
+                            if row.get("estimated_cost_usd") is not None else None
+                        ),
+                    }
+                    for row in records[:50]
+                ],
+            }
+        except Exception:
+            logger.exception("تعذر تحميل مقاييس استخدام الذكاء الاصطناعي.")
+            raise HTTPException(
+                status_code=503,
+                detail="تعذر تحميل المقاييس. تأكد من تنفيذ ترحيل ai_usage_monitoring في Supabase.",
+            )
+
     @router.get("/api/admin/businesses")
     def list_businesses(
         _admin=Depends(check_admin),
