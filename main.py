@@ -25,6 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "").strip()
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -1562,8 +1563,36 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def receive_webhook(request: Request):
+    # Verify Meta's signature against the exact raw request body before parsing
+    # or processing any event. Never accept unsigned requests in production.
+    if not META_APP_SECRET:
+        logger.error("META_APP_SECRET is not configured; rejecting WhatsApp webhook.")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification is not configured.",
+        )
+
+    raw_body = await request.body()
+    supplied_signature = request.headers.get("X-Hub-Signature-256", "").strip()
+    expected_signature = "sha256=" + hmac.new(
+        META_APP_SECRET.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not supplied_signature or not hmac.compare_digest(
+        supplied_signature,
+        expected_signature,
+    ):
+        logger.warning("Rejected WhatsApp webhook with missing or invalid signature.")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid webhook signature.",
+        )
+
     try:
-        body = await request.json()
+        import json
+        body = json.loads(raw_body)
     except Exception:
         raise HTTPException(
             status_code=400,
