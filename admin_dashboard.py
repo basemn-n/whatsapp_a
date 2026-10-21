@@ -928,6 +928,11 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 </div>
 <div class="panel">
 <h4>قيمة الطلبات التي تم تسليمها (المبيعات)</h4>
+<div class="stats">
+  <div class="stat-card"><span>المبيعات المحفوظة للطلبات المسلّمة</span><strong id="realizedRevenue">—</strong></div>
+  <div class="stat-card"><span>إجمالي القطع المسلّمة</span><strong id="deliveredQuantity">—</strong></div>
+</div>
+<p>المبيعات المحفوظة هي المبالغ المسجلة وقت الطلب، ولا تشمل التقديرات أو الطلبات غير المسلّمة.</p>
 <p id="exactRevenue">المبيعات الدقيقة: —</p>
 <p id="estimatedRevenue">المبيعات التقديرية للطلبات القديمة: —</p>
 <p id="missingRevenue">طلبات مسلّمة بلا سعر يمكن حسابه: —</p>
@@ -1369,6 +1374,8 @@ async function loadReports() {
     document.getElementById("reportProcessingOrders").textContent = data.processing_orders ?? 0;
     document.getElementById("reportDeliveredOrders").textContent = data.delivered_orders ?? 0;
     document.getElementById("reportCancelledOrders").textContent = data.cancelled_orders ?? 0;
+    document.getElementById("realizedRevenue").textContent = formatMoneyGroups(data.exact_revenue);
+    document.getElementById("deliveredQuantity").textContent = Number(data.delivered_quantity ?? 0).toLocaleString("ar");
     document.getElementById("exactRevenue").textContent =
       "المبيعات الدقيقة للطلبات المسلّمة: " + formatMoneyGroups(data.exact_revenue);
     document.getElementById("estimatedRevenue").textContent =
@@ -2080,6 +2087,7 @@ if (auth) {
                 "delivered_orders": 0,
                 "cancelled_orders": 0,
             }
+            delivered_quantity = 0
             exact_revenue = {}
             estimated_revenue = {}
             missing_price_orders = 0
@@ -2095,6 +2103,12 @@ if (auth) {
                     counts["processing_orders"] += 1
                 elif status == "delivered":
                     counts["delivered_orders"] += 1
+                    try:
+                        quantity_value = int(order.get("quantity") or 0)
+                        if quantity_value > 0:
+                            delivered_quantity += quantity_value
+                    except (TypeError, ValueError):
+                        logger.warning("Invalid quantity in delivered order %s", order.get("order_number"))
                 elif status == "cancelled":
                     counts["cancelled_orders"] += 1
 
@@ -2142,6 +2156,7 @@ if (auth) {
             return {
                 "total_orders": len(orders),
                 **counts,
+                "delivered_quantity": delivered_quantity,
                 "exact_revenue": exact_revenue,
                 "estimated_revenue": estimated_revenue,
                 "missing_price_orders": missing_price_orders,
