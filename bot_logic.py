@@ -1,6 +1,7 @@
 import os
 import base64
 import threading
+import uuid
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -77,8 +78,6 @@ def log_ai_usage(response, operation, business_id=None):
     """Persist token counts only; never send customer messages, phone numbers, or chat IDs."""
     import logging
     import requests
-    import uuid
-
     logger = logging.getLogger(__name__)
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -88,11 +87,12 @@ def log_ai_usage(response, operation, business_id=None):
 
     usage = extract_token_usage(response)
     response_metadata = getattr(response, "response_metadata", None) or {}
-    model_name = (
-        response_metadata.get("model_name")
-        or response_metadata.get("model")
-        or os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
+    default_model = (
+        os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+        if operation == "image"
+        else os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
     )
+    model_name = response_metadata.get("model_name") or response_metadata.get("model") or default_model
     rates = {
         "input": os.getenv("GROQ_INPUT_COST_PER_MILLION_USD"),
         "output": os.getenv("GROQ_OUTPUT_COST_PER_MILLION_USD"),
@@ -152,6 +152,7 @@ def generate_ai_response(
     image_bytes: bytes = None,
     business_context: str = None,
     history_key: str = None,
+    business_id: str = None,
 ) -> str:
     """
     business_context: معلومات النشاط التجاري الذي يتواصل معه العميل.
@@ -206,6 +207,7 @@ def generate_ai_response(
         messages.append(HumanMessage(content=user_message))
 
     response = (vision_llm if image_bytes else llm).invoke(messages)
+    log_ai_usage(response, "image" if image_bytes else "text", business_id)
     answer = response.content
 
     if not isinstance(answer, str):
