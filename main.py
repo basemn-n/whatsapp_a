@@ -625,12 +625,12 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         if not selected:
             names = "\n".join(
-                f"- {product.get('name')}"
+                f"- {product.get('name')} (رقم الموديل: {product.get('model_number') or 'غير محدد'})"
                 for product in products
             )
             return (
-                "لم أجد هذا المنتج ضمن المنتجات المتاحة. "
-                "اختر اسمًا من القائمة التالية:\n"
+                "لم أجد المنتج أو أن الاسم يطابق أكثر من منتج. "
+                "اختر اسمًا مع رقم الموديل من القائمة التالية، أو أرسل رقم الموديل:\n"
                 f"{names}\n\nأرسل /cancel للإلغاء."
             )
 
