@@ -5,9 +5,18 @@ ALTER TABLE public.products
   ADD COLUMN IF NOT EXISTS image_url text NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS stock_quantity integer NOT NULL DEFAULT 0;
 
-ALTER TABLE public.products
-  ADD CONSTRAINT products_stock_quantity_nonnegative
-  CHECK (stock_quantity >= 0) NOT VALID;
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'products_stock_quantity_nonnegative'
+      AND conrelid = 'public.products'::regclass
+  ) THEN
+    ALTER TABLE public.products
+      ADD CONSTRAINT products_stock_quantity_nonnegative
+      CHECK (stock_quantity >= 0) NOT VALID;
+  END IF;
+END $;
 
 CREATE INDEX IF NOT EXISTS idx_products_business_category
   ON public.products (business_id, category);
