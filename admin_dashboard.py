@@ -149,6 +149,10 @@ class ProductCreate(BaseModel):
     price: Decimal = Field(ge=0)
     currency: str = Field(default="YER", min_length=1, max_length=10)
     is_available: bool = True
+    model_number: str = Field(default="", max_length=120)
+    category: str = Field(default="", max_length=120)
+    image_url: str = Field(default="", max_length=2000)
+    stock_quantity: int = Field(default=0, ge=0, le=100000000)
 
 
 class ProductUpdate(BaseModel):
@@ -157,6 +161,10 @@ class ProductUpdate(BaseModel):
     price: Decimal = Field(ge=0)
     currency: str = Field(default="YER", min_length=1, max_length=10)
     is_available: bool
+    model_number: str = Field(default="", max_length=120)
+    category: str = Field(default="", max_length=120)
+    image_url: str = Field(default="", max_length=2000)
+    stock_quantity: int = Field(default=0, ge=0, le=100000000)
 
 
 def send_telegram_status_notification(chat_id, order):
@@ -863,33 +871,15 @@ onclick="showTab('requests')">طلبات التجار</button>
 <input type="hidden" id="productId">
 
 <div class="grid">
-<div>
-<label for="productName">اسم المنتج *</label>
-<input id="productName" maxlength="200" required>
-</div>
-
-<div>
-<label for="productPrice">السعر *</label>
-<input id="productPrice" type="number" min="0" step="0.01" required>
-</div>
-
-<div>
-<label for="productCurrency">العملة *</label>
-<input id="productCurrency" value="YER" maxlength="10" required>
-</div>
-
-<div>
-<label for="productAvailable">التوفر</label>
-<select id="productAvailable">
-<option value="true">متاح للطلب</option>
-<option value="false">غير متاح</option>
-</select>
-</div>
-
-<div class="full">
-<label for="productDescription">وصف المنتج</label>
-<textarea id="productDescription" rows="3" maxlength="2000"></textarea>
-</div>
+<div><label for="productName">اسم المنتج *</label><input id="productName" maxlength="200" required></div>
+<div><label for="productPrice">السعر *</label><input id="productPrice" type="number" min="0" step="0.01" required></div>
+<div><label for="productCurrency">العملة *</label><input id="productCurrency" value="YER" maxlength="10" required></div>
+<div><label for="productModelNumber">رقم الموديل / SKU</label><input id="productModelNumber" maxlength="120" placeholder="مثال: 4830"></div>
+<div><label for="productCategory">التصنيف</label><input id="productCategory" maxlength="120" placeholder="ملابس، إلكترونيات..."></div>
+<div><label for="productStock">الكمية في المخزون</label><input id="productStock" type="number" min="0" max="100000000" step="1" value="0" required></div>
+<div><label for="productImageUrl">رابط صورة المنتج</label><input id="productImageUrl" type="url" maxlength="2000" placeholder="https://..."></div>
+<div><label for="productAvailable">التوفر</label><select id="productAvailable"><option value="true">متاح للطلب</option><option value="false">غير متاح</option></select></div>
+<div class="full"><label for="productDescription">وصف المنتج</label><textarea id="productDescription" rows="3" maxlength="2000"></textarea></div>
 </div>
 
 <div class="form-actions">
@@ -905,7 +895,8 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <thead>
 <tr>
 <th>المنتج</th>
-<th>الوصف</th>
+<th>التصنيف / الوصف</th>
+<th>المخزون</th>
 <th>السعر</th>
 <th>العملة</th>
 <th>التوفر</th>
@@ -1605,7 +1596,7 @@ function renderProducts() {
   if (!currentProducts.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 6;
+    td.colSpan = 7;
     td.textContent = isMerchantSession
       ? "لا توجد منتجات في متجرك حتى الآن. أضف أول منتج من نموذج «إضافة منتج جديد» أعلاه؛ منتجات المتاجر الأخرى لا تظهر هنا."
       : "لا توجد منتجات لهذا النشاط التجاري.";
@@ -1617,8 +1608,27 @@ function renderProducts() {
   for (const product of currentProducts) {
     const tr = document.createElement("tr");
 
-    tr.appendChild(cell(product.name));
-    tr.appendChild(cell(product.description));
+    const productCell = document.createElement("td");
+    if (product.image_url) {
+      const image = document.createElement("img");
+      image.src = product.image_url;
+      image.alt = product.name || "صورة المنتج";
+      image.loading = "lazy";
+      image.style.cssText = "width:52px;height:52px;object-fit:cover;border-radius:8px;display:block;margin-bottom:6px";
+      image.onerror = () => image.remove();
+      productCell.appendChild(image);
+    }
+    const productLabel = document.createElement("div");
+    productLabel.textContent = product.name || "";
+    productCell.appendChild(productLabel);
+    if (product.model_number) {
+      const model = document.createElement("small");
+      model.textContent = "الموديل: " + product.model_number;
+      productCell.appendChild(model);
+    }
+    tr.appendChild(productCell);
+    tr.appendChild(cell(product.category || product.description));
+    tr.appendChild(cell(product.stock_quantity ?? 0));
     tr.appendChild(cell(product.price));
     tr.appendChild(cell(product.currency));
 
@@ -1646,8 +1656,11 @@ function renderProducts() {
 function editProduct(product) {
   document.getElementById("productId").value = product.id;
   document.getElementById("productName").value = product.name || "";
-  document.getElementById("productDescription").value =
-    product.description || "";
+  document.getElementById("productDescription").value = product.description || "";
+  document.getElementById("productModelNumber").value = product.model_number || "";
+  document.getElementById("productCategory").value = product.category || "";
+  document.getElementById("productImageUrl").value = product.image_url || "";
+  document.getElementById("productStock").value = product.stock_quantity ?? 0;
   document.getElementById("productPrice").value =
     product.price ?? 0;
   document.getElementById("productCurrency").value =
@@ -1667,6 +1680,10 @@ function resetProductForm() {
   document.getElementById("productForm").reset();
   document.getElementById("productId").value = "";
   document.getElementById("productCurrency").value = "YER";
+  document.getElementById("productModelNumber").value = "";
+  document.getElementById("productCategory").value = "";
+  document.getElementById("productImageUrl").value = "";
+  document.getElementById("productStock").value = "0";
   document.getElementById("productAvailable").value = "true";
   document.getElementById("formTitle").textContent =
     "إضافة منتج جديد";
@@ -1697,9 +1714,16 @@ document.getElementById("productForm")
       price: document.getElementById("productPrice").value,
       currency: document.getElementById("productCurrency")
         .value.trim(),
-      is_available:
-        document.getElementById("productAvailable").value === "true"
+      is_available: document.getElementById("productAvailable").value === "true",
+      model_number: document.getElementById("productModelNumber").value.trim(),
+      category: document.getElementById("productCategory").value.trim(),
+      image_url: document.getElementById("productImageUrl").value.trim(),
+      stock_quantity: Number(document.getElementById("productStock").value)
     };
+    if (!Number.isInteger(payload.stock_quantity) || payload.stock_quantity < 0) {
+      setMessage("أدخل كمية مخزون صحيحة (صفر أو أكثر).");
+      return;
+    }
 
     if (!payload.name || !payload.currency || payload.price === "") {
       setMessage("يرجى تعبئة اسم المنتج والسعر والعملة.");
@@ -1816,7 +1840,7 @@ if (auth) {
                 supabase.table("products")
                 .select(
                     "id, business_id, name, description, "
-                    "price, currency, is_available"
+                    "price, currency, is_available, model_number, category, image_url, stock_quantity"
                 )
                 .eq("business_id", business_id)
                 .order("name")
@@ -1858,10 +1882,14 @@ if (auth) {
                     "price": float(payload.price),
                     "currency": currency,
                     "is_available": payload.is_available,
+                    "model_number": payload.model_number.strip(),
+                    "category": payload.category.strip(),
+                    "image_url": payload.image_url.strip(),
+                    "stock_quantity": payload.stock_quantity,
                 })
                 .select(
                     "id, business_id, name, description, "
-                    "price, currency, is_available"
+                    "price, currency, is_available, model_number, category, image_url, stock_quantity"
                 )
                 .execute()
             )
@@ -1911,6 +1939,10 @@ if (auth) {
                     "price": float(payload.price),
                     "currency": currency,
                     "is_available": payload.is_available,
+                    "model_number": payload.model_number.strip(),
+                    "category": payload.category.strip(),
+                    "image_url": payload.image_url.strip(),
+                    "stock_quantity": payload.stock_quantity,
                 })
                 .eq("id", product_id)
                 .eq("business_id", business_id)
