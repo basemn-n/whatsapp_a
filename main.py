@@ -417,6 +417,31 @@ def save_telegram_order(chat_id: int, order_data: dict):
             logger.error("النشاط التجاري المرتبط بالطلب غير موجود.")
             return None
 
+        # Capture the current product price for the order snapshot. Stock
+        # reservation and order insertion remain in the existing atomic RPC.
+        product_result = (
+            supabase.table("products")
+            .select("id, name, price, currency")
+            .eq("business_id", business_id)
+            .eq("name", order_data["product_name"])
+            .limit(1)
+            .execute()
+        )
+        if not product_result.data:
+            logger.error("تعذر تسجيل الطلب: المنتج غير موجود في المتجر المحدد.")
+            return {"error": "product_unavailable"}
+
+        selected_product = product_result.data[0]
+        try:
+            unit_price = float(selected_product.get("price"))
+            if unit_price < 0:
+                raise ValueError("negative price")
+        except (TypeError, ValueError):
+            logger.error("تعذر تسجيل الطلب: سعر المنتج غير صالح.")
+            return None
+        order_currency = selected_product.get("currency") or "YER"
+        order_total = round(unit_price * quantity, 2)
+
         # The database function locks the selected product row and performs
         # stock validation, decrement, and order insertion in one transaction.
         result = supabase.rpc(
@@ -453,6 +478,34 @@ def save_telegram_order(chat_id: int, order_data: dict):
             return None
 
         saved_order = payload.get("order") or {}
+
+        # Persist a price snapshot after the existing atomic order creation.
+        # If this secondary update fails, do not undo the successfully reserved
+        # order; log it clearly so the report can treat that order as estimated.
+        order_id = saved_order.get("id")
+        if order_id:
+            try:
+                (
+                    supabase.table("orders")
+                    .update({
+                        "total_price": order_total,
+                        "currency": order_currency,
+                    })
+                    .eq("id", order_id)
+                    .eq("business_id", business_id)
+                    .execute()
+                )
+            except Exception:
+                logger.exception(
+                    "تم تسجيل الطلب لكن تعذر حفظ لقطة السعر للطلب %s.",
+                    saved_order.get("order_number"),
+                )
+        else:
+            logger.warning(
+                "تم تسجيل الطلب لكن دالة قاعدة البيانات لم تُرجع معرّف الطلب؛ "
+                "تعذر حفظ لقطة السعر."
+            )
+
         return {
             "order_number": saved_order.get("order_number"),
             "status": saved_order.get("status", "pending"),
