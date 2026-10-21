@@ -1994,6 +1994,10 @@ if (auth) {
                 })
                 .eq("id", product_id)
                 .eq("business_id", business_id)
+                .select(
+                    "id, business_id, name, description, price, currency, "
+                    "is_available, model_number, category, image_url, stock_quantity"
+                )
                 .execute()
             )
 
