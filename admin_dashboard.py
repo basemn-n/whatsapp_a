@@ -895,7 +895,8 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <thead>
 <tr>
 <th>المنتج</th>
-<th>الوصف</th>
+<th>التصنيف / الوصف</th>
+<th>المخزون</th>
 <th>السعر</th>
 <th>العملة</th>
 <th>التوفر</th>
@@ -1595,7 +1596,7 @@ function renderProducts() {
   if (!currentProducts.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 6;
+    td.colSpan = 7;
     td.textContent = isMerchantSession
       ? "لا توجد منتجات في متجرك حتى الآن. أضف أول منتج من نموذج «إضافة منتج جديد» أعلاه؛ منتجات المتاجر الأخرى لا تظهر هنا."
       : "لا توجد منتجات لهذا النشاط التجاري.";
