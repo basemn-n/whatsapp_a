@@ -679,6 +679,108 @@ form.addEventListener("submit",async event=>{
 
         return result.data[0]
 
+    @router.get("/store/{business_id}", response_class=HTMLResponse)
+    def public_store(business_id: str):
+        """Public read-only storefront; exposes only public business fields and available products."""
+        import html
+        import re
+
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", business_id):
+            raise HTTPException(status_code=404, detail="المتجر غير موجود")
+
+        try:
+            business_result = (
+                supabase.table("businesses")
+                .select("id, name")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
+            if not business_result.data:
+                raise HTTPException(status_code=404, detail="المتجر غير موجود")
+            business = business_result.data[0]
+
+            products_result = (
+                supabase.table("products")
+                .select("name, description, price, currency, model_number, category, stock_quantity, is_available")
+                .eq("business_id", business_id)
+                .eq("is_available", True)
+                .order("name")
+                .limit(100)
+                .execute()
+            )
+            products = [
+                product for product in (products_result.data or [])
+                if product.get("stock_quantity") is None or product.get("stock_quantity", 0) > 0
+            ]
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر تحميل صفحة المتجر العامة.")
+            raise HTTPException(status_code=503, detail="تعذر تحميل المتجر حاليًا")
+
+        esc = lambda value: html.escape(str(value if value is not None else ""), quote=True)
+        store_name = esc(business.get("name") or "المتجر")
+        industry = esc(business.get("industry") or "")
+        description = esc(business.get("description") or "")
+        telegram_url = "https://t.me/SmartCustomerHelp2026Bot?start=" + business_id
+        cards = []
+        for product in products:
+            name = esc(product.get("name") or "منتج")
+            detail = esc(product.get("description") or "")
+            category = esc(product.get("category") or "")
+            model = esc(product.get("model_number") or "")
+            price = esc(product.get("price") if product.get("price") is not None else "السعر غير محدد")
+            currency = esc(product.get("currency") or "YER")
+            meta = []
+            if category:
+                meta.append(f'<span class="tag">{category}</span>')
+            if model:
+                meta.append(f'<span class="tag">الموديل: {model}</span>')
+            cards.append(
+                '<article class="product">'
+                f'<div class="product-top"><span class="dot"></span><span class="available">متاح للطلب</span></div>'
+                f'<h2>{name}</h2>'
+                f'<p class="description">{detail or "تواصل معنا لمعرفة تفاصيل المنتج."}</p>'
+                f'<div class="tags">{"".join(meta)}</div>'
+                f'<div class="price">{price} <small>{currency}</small></div>'
+                f'<a class="order" href="{esc(telegram_url)}" target="_blank" rel="noopener noreferrer">اسأل أو اطلب عبر Telegram</a>'
+                '</article>'
+            )
+        product_html = "".join(cards) if cards else (
+            '<div class="empty"><h2>لا توجد منتجات متاحة حاليًا</h2>'
+            '<p>يمكنك العودة لاحقًا للاطلاع على المنتجات الجديدة.</p></div>'
+        )
+        page = f"""<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="{description or store_name}">
+<title>{store_name} | المتجر</title>
+<style>
+:root{{color-scheme:light;--ink:#172033;--muted:#64748b;--line:#e2e8f0;--accent:#0f766e;--soft:#f1f5f9}}
+*{{box-sizing:border-box}}body{{margin:0;background:#f8fafc;color:var(--ink);font-family:Tahoma,Arial,sans-serif;line-height:1.7}}
+header{{background:linear-gradient(135deg,#0f766e,#115e59);color:white;padding:42px 20px 52px}}
+.wrap{{width:min(1080px,100% - 32px);margin:auto}}.eyebrow{{opacity:.85;font-size:14px}}h1{{font-size:clamp(28px,5vw,42px);margin:8px 0}}.intro{{max-width:680px;color:#e2e8f0;margin:0}}
+main{{padding:28px 0 54px}}.section-title{{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:18px}}
+.section-title h2{{font-size:22px;margin:0}}.count{{color:var(--muted);font-size:14px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:16px}}
+.product,.empty{{background:white;border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 4px 18px #0f172a08}}
+.product{{display:flex;flex-direction:column;min-height:260px}}.product-top{{display:flex;align-items:center;gap:7px;color:var(--accent);font-size:13px}}
+.dot{{width:8px;height:8px;background:#16a34a;border-radius:50%}}.product h2{{font-size:19px;margin:12px 0 5px}}.description{{color:var(--muted);font-size:14px;white-space:pre-wrap;margin:0 0 12px}}
+.tags{{display:flex;flex-wrap:wrap;gap:6px}}.tag{{background:var(--soft);border-radius:7px;padding:3px 8px;color:#475569;font-size:12px}}
+.price{{font-size:23px;font-weight:700;margin:18px 0 14px}}.price small{{font-size:13px;color:var(--muted);font-weight:400}}
+.order{{margin-top:auto;display:block;text-align:center;text-decoration:none;background:var(--accent);color:white;border-radius:10px;padding:11px 12px;font-weight:700}}
+.order:hover{{background:#115e59}}footer{{border-top:1px solid var(--line);padding:20px;text-align:center;color:var(--muted);font-size:13px}}
+.empty{{grid-column:1/-1;text-align:center;padding:42px 20px}}.empty p{{color:var(--muted)}}
+</style></head>
+<body>
+<header><div class="wrap"><div class="eyebrow">{industry or "المتجر الرسمي"}</div><h1>{store_name}</h1><p class="intro">{description or "تصفح المنتجات المتاحة وتواصل معنا للاستفسار أو تقديم طلب."}</p></div></header>
+<main class="wrap"><div class="section-title"><h2>المنتجات المتاحة</h2><span class="count">{len(products)} منتج</span></div><section class="grid">{product_html}</section></main>
+<footer>للاستفسار والطلب، استخدم رابط التواصل الموجود في بطاقة المنتج.</footer>
+</body></html>"""
+        return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
+
     @router.get("/admin", response_class=HTMLResponse)
     def dashboard():
         return HTMLResponse(r"""

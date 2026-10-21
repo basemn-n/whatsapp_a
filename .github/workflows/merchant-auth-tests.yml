@@ -5,6 +5,8 @@ on:
     paths:
       - "admin_dashboard.py"
       - "tests/test_merchant_auth.py"
+      - "tests/test_tenant_routes.py"
+      - "tests/test_public_storefront.py"
       - ".github/workflows/merchant-auth-tests.yml"
   push:
     branches:
@@ -26,7 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip fastapi pydantic requests
+        run: python -m pip install --upgrade pip fastapi pydantic requests httpx2
       - name: Run merchant authentication unit tests
         env:
           MERCHANT_SESSION_SECRET: "ci-only-test-secret"
