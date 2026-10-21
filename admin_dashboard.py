@@ -1157,6 +1157,11 @@ async function ensureLogin() {
 }
 
 function showTab(tab) {
+  // Merchant sessions must never navigate to the admin-only signup requests panel.
+  if (tab === "requests" && isMerchantSession) {
+    tab = "orders";
+  }
+
   document.getElementById("ordersPanel")
     .classList.toggle("hidden", tab !== "orders");
 
