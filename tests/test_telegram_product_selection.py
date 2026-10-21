@@ -1,7 +1,19 @@
-"""Unit tests for unambiguous Telegram product selection; no live database is used."""
+"""Unit tests for product selection without importing the live application or database."""
+import ast
 import unittest
+from pathlib import Path
 
-from main import find_product
+
+SOURCE = Path("main.py").read_text(encoding="utf-8")
+TREE = ast.parse(SOURCE)
+HELPERS = [
+    node for node in TREE.body
+    if isinstance(node, ast.FunctionDef)
+    and node.name in {"normalize_text", "find_product"}
+]
+NAMESPACE = {}
+exec(compile(ast.Module(body=HELPERS, type_ignores=[]), "main.py", "exec"), NAMESPACE)
+find_product = NAMESPACE["find_product"]
 
 
 class TelegramProductSelectionTests(unittest.TestCase):
