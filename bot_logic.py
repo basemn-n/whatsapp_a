@@ -1,6 +1,7 @@
 import os
 import base64
 import threading
+import uuid
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -49,12 +50,110 @@ vision_llm = ChatOpenAI(
 )
 
 
+def extract_token_usage(response):
+    """Return provider-reported token counts without retaining message contents."""
+    metadata = getattr(response, "usage_metadata", None) or {}
+    if not metadata:
+        response_metadata = getattr(response, "response_metadata", None) or {}
+        metadata = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+
+    def non_negative_int(*keys):
+        for key in keys:
+            value = metadata.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                return value
+        return 0
+
+    input_tokens = non_negative_int("input_tokens", "prompt_tokens")
+    output_tokens = non_negative_int("output_tokens", "completion_tokens")
+    total_tokens = non_negative_int("total_tokens") or input_tokens + output_tokens
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def log_ai_usage(response, operation, business_id=None):
+    """Persist token counts only; never send customer messages, phone numbers, or chat IDs."""
+    import logging
+    import requests
+    logger = logging.getLogger(__name__)
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_key:
+        logger.info("AI usage not persisted because Supabase service settings are unavailable.")
+        return
+
+    usage = extract_token_usage(response)
+    response_metadata = getattr(response, "response_metadata", None) or {}
+    default_model = (
+        os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+        if operation == "image"
+        else os.getenv("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
+    )
+    model_name = response_metadata.get("model_name") or response_metadata.get("model") or default_model
+    rate_prefix = "GROQ_VISION" if operation == "image" else "GROQ"
+    rates = {
+        "input": os.getenv(f"{rate_prefix}_INPUT_COST_PER_MILLION_USD"),
+        "output": os.getenv(f"{rate_prefix}_OUTPUT_COST_PER_MILLION_USD"),
+    }
+    estimated_cost = None
+    try:
+        if rates["input"] is not None and rates["output"] is not None:
+            input_rate = float(rates["input"])
+            output_rate = float(rates["output"])
+            if input_rate >= 0 and output_rate >= 0:
+                estimated_cost = (
+                    usage["input_tokens"] * input_rate
+                    + usage["output_tokens"] * output_rate
+                ) / 1_000_000
+    except (TypeError, ValueError):
+        estimated_cost = None
+
+    record = {
+        "provider": "groq",
+        "model": str(model_name)[:120],
+        "operation": operation,
+        "business_id": business_id if isinstance(business_id, str) and _is_uuid(business_id) else None,
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "total_tokens": usage["total_tokens"],
+        "estimated_cost_usd": estimated_cost,
+    }
+    try:
+        response_http = requests.post(
+            f"{supabase_url}/rest/v1/ai_usage_logs",
+            headers={
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            json=record,
+            timeout=5,
+        )
+        if not response_http.ok:
+            logger.warning("Could not persist AI usage metrics (HTTP %s).", response_http.status_code)
+    except requests.RequestException:
+        logger.warning("Could not persist AI usage metrics due to a network error.")
+
+
+def _is_uuid(value):
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def generate_ai_response(
     user_phone: str,
     user_message: str,
     image_bytes: bytes = None,
     business_context: str = None,
     history_key: str = None,
+    business_id: str = None,
 ) -> str:
     """
     business_context: معلومات النشاط التجاري الذي يتواصل معه العميل.
@@ -109,6 +208,7 @@ def generate_ai_response(
         messages.append(HumanMessage(content=user_message))
 
     response = (vision_llm if image_bytes else llm).invoke(messages)
+    log_ai_usage(response, "image" if image_bytes else "text", business_id)
     answer = response.content
 
     if not isinstance(answer, str):

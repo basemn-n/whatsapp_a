@@ -884,6 +884,7 @@ onclick="showTab('products')">المنتجات</button>
 onclick="showTab('reports')">تقارير المبيعات</button>
 <button id="requestsTab" class="hidden"
 onclick="showTab('requests')">طلبات التجار</button>
+<button id="aiUsageTab" class="hidden" onclick="showTab('ai-usage')">استخدام الذكاء الاصطناعي</button>
 </div>
 
 <div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
@@ -1045,6 +1046,23 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <p id="cancelledEstimatedValue">تقدير الطلبات الملغاة القديمة: —</p>
 <p id="cancelledMissingValue">طلبات ملغاة بلا سعر يمكن حسابه: —</p>
 </div>
+</section>
+
+<section id="aiUsagePanel" class="panel hidden">
+  <h3>مراقبة استخدام الذكاء الاصطناعي</h3>
+  <p>تُحفظ أعداد الرموز فقط، دون رسائل العملاء أو أرقامهم أو محتوى الصور. يعرض الملخص آخر 1000 طلب مسجل.</p>
+  <div class="toolbar"><button id="refreshAIUsageBtn" onclick="loadAIUsage()">تحديث الاستخدام</button></div>
+  <div class="stats">
+    <div class="stat-card"><span>الطلبات المسجلة ضمن العينة</span><strong id="aiUsageSample">—</strong></div>
+    <div class="stat-card"><span>إجمالي الرموز</span><strong id="aiUsageTokens">—</strong></div>
+    <div class="stat-card"><span>التكلفة التقديرية بالدولار</span><strong id="aiUsageCost">—</strong></div>
+    <div class="stat-card"><span>طلبات دون سعر مضبوط</span><strong id="aiUsageUnpriced">—</strong></div>
+  </div>
+  <h4>أحدث الاستخدامات</h4>
+  <div class="wrap"><table style="min-width:720px">
+    <thead><tr><th>التاريخ</th><th>النموذج</th><th>النوع</th><th>رموز الإدخال</th><th>رموز الإخراج</th><th>التكلفة التقديرية</th></tr></thead>
+    <tbody id="aiUsageRows"></tbody>
+  </table></div>
 </section>
 
 <section id="requestsPanel" class="panel hidden">
@@ -1262,7 +1280,7 @@ async function ensureLogin() {
 
 function showTab(tab) {
   // Merchant sessions must never navigate to the admin-only signup requests panel.
-  if (tab === "requests" && isMerchantSession) {
+  if ((tab === "requests" || tab === "ai-usage") && isMerchantSession) {
     tab = "orders";
   }
 
@@ -1276,6 +1294,8 @@ function showTab(tab) {
     .classList.toggle("hidden", tab !== "reports");
   document.getElementById("requestsPanel")
     .classList.toggle("hidden", tab !== "requests");
+  document.getElementById("aiUsagePanel")
+    .classList.toggle("hidden", tab !== "ai-usage");
 
   document.getElementById("ordersTab")
     .classList.toggle("active", tab === "orders");
@@ -1287,15 +1307,60 @@ function showTab(tab) {
     .classList.toggle("active", tab === "reports");
   document.getElementById("requestsTab")
     .classList.toggle("active", tab === "requests");
+  document.getElementById("aiUsageTab")
+    .classList.toggle("active", tab === "ai-usage");
 
   if (tab === "requests") {
     loadSignupRequests();
+  } else if (tab === "ai-usage") {
+    loadAIUsage();
   } else if (tab === "products") {
     loadBusinesses();
   } else if (tab === "reports") {
     loadReports();
   } else {
     loadOrders();
+  }
+}
+
+async function loadAIUsage() {
+  const button = document.getElementById("refreshAIUsageBtn");
+  button.disabled = true;
+  try {
+    if (!(await ensureLogin())) return;
+    if (isMerchantSession) throw Error("هذا التقرير متاح للمدير العام فقط.");
+    setMessage("جارٍ تحميل مقاييس استخدام الذكاء الاصطناعي...");
+    const data = await api("/api/admin/ai-usage");
+    document.getElementById("aiUsageSample").textContent = Number(data.sample_size || 0).toLocaleString("en-US");
+    document.getElementById("aiUsageTokens").textContent = Number(data.total_tokens || 0).toLocaleString("en-US");
+    document.getElementById("aiUsageCost").textContent = data.estimated_cost_usd === null
+      ? "غير محددة"
+      : "$" + Number(data.estimated_cost_usd).toFixed(6);
+    document.getElementById("aiUsageUnpriced").textContent = Number(data.unpriced_requests || 0).toLocaleString("en-US");
+    const rows = document.getElementById("aiUsageRows");
+    rows.replaceChildren();
+    for (const item of (data.recent || [])) {
+      const tr = document.createElement("tr");
+      let date = "—";
+      if (item.created_at) {
+        const parsed = new Date(item.created_at);
+        if (!Number.isNaN(parsed.getTime())) date = parsed.toLocaleString("ar");
+      }
+      tr.append(
+        cell(date),
+        cell(item.model),
+        cell(item.operation === "image" ? "صورة" : "نص"),
+        cell(Number(item.input_tokens || 0).toLocaleString("en-US")),
+        cell(Number(item.output_tokens || 0).toLocaleString("en-US")),
+        cell(item.estimated_cost_usd === null ? "غير محددة" : "$" + Number(item.estimated_cost_usd).toFixed(6))
+      );
+      rows.appendChild(tr);
+    }
+    setMessage("تم تحديث مقاييس الاستخدام. قد تكون التكلفة غير محددة حتى تضبط أسعار الرموز من مزوّد Groq.");
+  } catch (error) {
+    setMessage(error.message || "تعذر تحميل مقاييس الاستخدام.");
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1556,6 +1621,7 @@ async function loadBusinesses() {
       : "اختر النشاط التجاري الذي تريد إدارة منتجاته.";
     document.getElementById("createMerchantAccountBtn").classList.toggle("hidden", isMerchantSession);
     document.getElementById("requestsTab").classList.toggle("hidden", isMerchantSession);
+    document.getElementById("aiUsageTab").classList.toggle("hidden", isMerchantSession);
     const previous = select.value;
 
     select.replaceChildren();
@@ -1947,6 +2013,54 @@ if (auth) {
 </body>
 </html>
 """)
+
+    @router.get("/api/admin/ai-usage")
+    def get_ai_usage(_admin=Depends(check_admin)):
+        if _admin.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="تقارير استخدام الذكاء الاصطناعي متاحة للمدير العام فقط.")
+        try:
+            result = (
+                supabase.table("ai_usage_logs")
+                .select("created_at, business_id, provider, model, operation, input_tokens, output_tokens, total_tokens, estimated_cost_usd")
+                .order("created_at", desc=True)
+                .limit(1000)
+                .execute()
+            )
+            records = result.data or []
+            total_input = sum(int(row.get("input_tokens") or 0) for row in records)
+            total_output = sum(int(row.get("output_tokens") or 0) for row in records)
+            total_tokens = sum(int(row.get("total_tokens") or 0) for row in records)
+            priced = [
+                float(row["estimated_cost_usd"])
+                for row in records
+                if row.get("estimated_cost_usd") is not None
+            ]
+            return {
+                "sample_size": len(records),
+                "limit": 1000,
+                "input_tokens": total_input,
+                "output_tokens": total_output,
+                "total_tokens": total_tokens,
+                "estimated_cost_usd": round(sum(priced), 8) if priced else None,
+                "priced_requests": len(priced),
+                "unpriced_requests": len(records) - len(priced),
+                "recent": [
+                    {
+                        **row,
+                        "estimated_cost_usd": (
+                            float(row["estimated_cost_usd"])
+                            if row.get("estimated_cost_usd") is not None else None
+                        ),
+                    }
+                    for row in records[:50]
+                ],
+            }
+        except Exception:
+            logger.exception("تعذر تحميل مقاييس استخدام الذكاء الاصطناعي.")
+            raise HTTPException(
+                status_code=503,
+                detail="تعذر تحميل المقاييس. تأكد من تنفيذ ترحيل ai_usage_monitoring في Supabase.",
+            )
 
     @router.get("/api/admin/businesses")
     def list_businesses(

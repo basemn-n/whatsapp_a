@@ -1174,6 +1174,7 @@ async def respond_to_telegram_text(chat_id: int, user_text: str):
             None,
             context,
             f"telegram_{chat_id}_{business_id or 'default'}",
+            business_id,
         )
     except Exception:
         logger.exception("فشل معالجة نص Telegram (نص مكتوب أو مستخرج من الصوت).")
@@ -1435,6 +1436,7 @@ async def process_telegram_update(update: dict):
                         image_bytes,
                         context,
                         f"telegram_{chat_id}_{business_id}",
+                        business_id,
                     )
                 except Exception:
                     logger.exception("Failed to process Telegram photo with AI.")
@@ -1675,6 +1677,7 @@ async def receive_webhook(request: Request):
                             f"whatsapp_{PHONE_NUMBER_ID or 'default'}_"
                             f"{from_number}"
                         ),
+                        business_id,
                     )
 
                     await asyncio.to_thread(
