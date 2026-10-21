@@ -11,7 +11,8 @@ import uuid
 import threading
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -1701,8 +1702,38 @@ class TestAIRequest(BaseModel):
     message: str
 
 
+test_ai_security = HTTPBasic(auto_error=False)
+
+
 @app.post("/test-ai")
-async def test_ai(request: TestAIRequest):
+async def test_ai(
+    request: TestAIRequest,
+    credentials: HTTPBasicCredentials = Depends(test_ai_security),
+):
+    # This diagnostic endpoint can incur provider costs, so restrict it to the
+    # configured administrator rather than leaving it publicly callable.
+    admin_username = os.getenv("ADMIN_USERNAME", "")
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+    if not admin_username or not admin_password:
+        raise HTTPException(
+            status_code=503,
+            detail="إعداد بيانات دخول المدير غير مكتمل",
+        )
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="يلزم تسجيل دخول المدير",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    valid_user = hmac.compare_digest(credentials.username, admin_username)
+    valid_password = hmac.compare_digest(credentials.password, admin_password)
+    if not (valid_user and valid_password):
+        raise HTTPException(
+            status_code=401,
+            detail="بيانات دخول المدير غير صحيحة",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
     try:
         reply = await asyncio.to_thread(
             generate_ai_response,
