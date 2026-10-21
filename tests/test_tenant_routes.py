@@ -78,6 +78,32 @@ class MerchantTenantRouteTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_merchant_cannot_create_product_for_another_business(self):
+        response = self.client.post(
+            "/api/admin/products",
+            headers=self.headers,
+            json={
+                "business_id": OTHER_BUSINESS_ID,
+                "name": "منتج تجريبي",
+                "price": 100,
+                "is_available": True,
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_merchant_cannot_update_another_business_product(self):
+        response = self.client.patch(
+            "/api/admin/products/product-123",
+            params={"business_id": OTHER_BUSINESS_ID},
+            headers=self.headers,
+            json={
+                "name": "منتج معدل",
+                "price": 100,
+                "is_available": True,
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_merchant_cannot_read_another_business_orders(self):
         response = self.client.get(
             "/api/admin/orders",
