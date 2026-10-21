@@ -7,6 +7,7 @@ on:
       - "tests/test_merchant_auth.py"
       - "tests/test_tenant_routes.py"
       - "tests/test_public_storefront.py"
+      - "tests/test_ai_usage_logging.py"
       - ".github/workflows/merchant-auth-tests.yml"
   push:
     branches:
