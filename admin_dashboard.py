@@ -856,7 +856,12 @@ onclick="showTab('requests')">طلبات التجار</button>
 <h3>إدارة المنتجات</h3>
 <p id="productsIntro">إدارة منتجات النشاط التجاري المحدد.</p>
 
-<div class="toolbar"><button onclick="loadProducts()">تحديث المنتجات</button></div>
+<div class="toolbar">
+  <div class="search-box">
+    <input id="productSearch" type="search" placeholder="ابحث باسم المنتج أو الموديل أو التصنيف" aria-label="البحث في المنتجات">
+  </div>
+  <button onclick="loadProducts()">تحديث المنتجات</button>
+</div>
 <div class="sub-panel">
   <strong>رابط العملاء لفتح مساعد المتجر في Telegram</strong>
   <p>انسخ هذا الرابط وضعه في وصف قناة المنتجات أو في منشور مثبت. يجب أن يضغط العميل عليه ثم يضغط Start في البوت.</p>
@@ -1593,19 +1598,30 @@ function renderProducts() {
   const rows = document.getElementById("productRows");
   rows.replaceChildren();
 
-  if (!currentProducts.length) {
+  const searchInput = document.getElementById("productSearch");
+  const searchText = searchInput ? searchInput.value.trim().toLocaleLowerCase() : "";
+  const visibleProducts = currentProducts.filter(product => {
+    const searchable = [
+      product.name, product.model_number, product.category, product.description
+    ].filter(Boolean).join(" ").toLocaleLowerCase();
+    return searchable.includes(searchText);
+  });
+
+  if (!visibleProducts.length) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
     td.colSpan = 7;
-    td.textContent = isMerchantSession
-      ? "لا توجد منتجات في متجرك حتى الآن. أضف أول منتج من نموذج «إضافة منتج جديد» أعلاه؛ منتجات المتاجر الأخرى لا تظهر هنا."
-      : "لا توجد منتجات لهذا النشاط التجاري.";
+    td.textContent = currentProducts.length && searchText
+      ? "لا توجد منتجات تطابق عبارة البحث."
+      : (isMerchantSession
+        ? "لا توجد منتجات في متجرك حتى الآن. أضف أول منتج من نموذج «إضافة منتج جديد» أعلاه؛ منتجات المتاجر الأخرى لا تظهر هنا."
+        : "لا توجد منتجات لهذا النشاط التجاري.");
     tr.appendChild(td);
     rows.appendChild(tr);
     return;
   }
 
-  for (const product of currentProducts) {
+  for (const product of visibleProducts) {
     const tr = document.createElement("tr");
 
     const productCell = document.createElement("td");
@@ -1776,6 +1792,9 @@ document.getElementById("businessSelect")
 
 document.getElementById("filter")
   .addEventListener("change", renderOrders);
+
+document.getElementById("productSearch")
+  .addEventListener("input", renderProducts);
 
 document.getElementById("orderSearch")
   .addEventListener("input", renderOrders);
