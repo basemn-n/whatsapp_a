@@ -96,7 +96,8 @@ def get_business_context(business_id: str):
         products_result = (
             supabase.table("products")
             .select(
-                "name, description, price, currency, is_available"
+                "name, description, price, currency, is_available, "
+                "model_number, category, stock_quantity"
             )
             .eq("business_id", business_id)
             .execute()
@@ -129,16 +130,27 @@ def get_business_context(business_id: str):
         else:
             for product in products:
                 availability = (
-                    "متاح"
+                    "متاح للطلب"
                     if product.get("is_available")
-                    else "غير متاح"
+                    else "غير متاح للطلب"
+                )
+                model_number = str(product.get("model_number") or "").strip()
+                category = str(product.get("category") or "").strip()
+                stock_quantity = product.get("stock_quantity")
+                stock_text = (
+                    f"الكمية في المخزون: {stock_quantity}"
+                    if stock_quantity is not None
+                    else "كمية المخزون: غير محددة"
                 )
                 lines.append(
-                    f"- {product.get('name') or 'منتج'}: "
-                    f"{product.get('description') or ''}; "
+                    f"- اسم المنتج: {product.get('name') or 'منتج'}; "
+                    f"التصنيف: {category or 'غير محدد'}; "
+                    f"رقم الموديل/SKU: {model_number or 'غير محدد'}; "
+                    f"الوصف: {product.get('description') or ''}; "
                     f"السعر: {product.get('price')}; "
                     f"العملة: {product.get('currency') or settings.get('currency') or 'YER'}; "
-                    f"الحالة: {availability}"
+                    f"{stock_text}; "
+                    f"حالة الطلب في لوحة التاجر: {availability}"
                 )
 
         return "\n".join(lines)
