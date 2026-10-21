@@ -377,14 +377,13 @@ def parse_quantity(value: str):
 
 
 def save_telegram_order(chat_id: int, order_data: dict):
-    """حفظ طلب مؤكد مع رقم محادثة تيليجرام."""
+    """Atomically validate stock, reserve units, and save a confirmed order."""
 
     if not supabase:
         logger.error("تعذر تسجيل الطلب: Supabase غير متصل.")
         return None
 
     business_id = order_data.get("business_id")
-
     if not business_id:
         logger.error("تعذر تسجيل الطلب: business_id غير موجود.")
         return None
@@ -396,7 +395,6 @@ def save_telegram_order(chat_id: int, order_data: dict):
         "payment_method",
         "product_name",
     )
-
     if any(
         not str(order_data.get(field, "")).strip()
         for field in required_fields
@@ -404,7 +402,6 @@ def save_telegram_order(chat_id: int, order_data: dict):
         return None
 
     quantity = parse_quantity(str(order_data.get("quantity", 1)))
-
     if not quantity:
         return None
 
@@ -416,84 +413,53 @@ def save_telegram_order(chat_id: int, order_data: dict):
             .limit(1)
             .execute()
         )
-
         if not business_result.data:
             logger.error("النشاط التجاري المرتبط بالطلب غير موجود.")
             return None
 
-        product_result = (
-            supabase.table("products")
-            .select("name, is_available, price, currency")
-            .eq("business_id", business_id)
-            .eq("name", order_data["product_name"])
-            .eq("is_available", True)
-            .limit(1)
-            .execute()
-        )
+        # The database function locks the selected product row and performs
+        # stock validation, decrement, and order insertion in one transaction.
+        result = supabase.rpc(
+            "create_telegram_order_with_stock",
+            {
+                "p_business_id": business_id,
+                "p_customer_name": order_data["customer_name"].strip(),
+                "p_customer_phone": order_data["customer_phone"].strip(),
+                "p_customer_address": order_data["customer_address"].strip(),
+                "p_payment_method": order_data["payment_method"].strip(),
+                "p_product_name": order_data["product_name"],
+                "p_quantity": quantity,
+                "p_telegram_chat_id": str(chat_id),
+            },
+        ).execute()
 
-        if not product_result.data:
-            logger.warning("المنتج لم يعد متاحًا؛ لم يُحفظ الطلب.")
+        payload = result.data
+        if isinstance(payload, list):
+            payload = payload[0] if payload else None
+        if not isinstance(payload, dict):
+            logger.error("وظيفة تسجيل الطلب لم تُرجع نتيجة مفهومة.")
             return None
 
-        product = product_result.data[0]
-        base_order = {
-            "business_id": business_id,
-            "customer_name": order_data["customer_name"].strip(),
-            "customer_phone": order_data["customer_phone"].strip(),
-            "customer_address": order_data["customer_address"].strip(),
-            "payment_method": order_data["payment_method"].strip(),
-            "product_name": product["name"],
-            "quantity": quantity,
-            "status": "pending",
-            "telegram_chat_id": str(chat_id),
+        if not payload.get("success"):
+            reason = payload.get("reason")
+            if reason == "insufficient_stock":
+                return {
+                    "error": "insufficient_stock",
+                    "available_stock": payload.get("available_stock", 0),
+                }
+            if reason == "product_unavailable":
+                return {"error": "product_unavailable"}
+            logger.error("تعذر تسجيل الطلب عبر الوظيفة الذرية: %s", reason)
+            return None
+
+        saved_order = payload.get("order") or {}
+        return {
+            "order_number": saved_order.get("order_number"),
+            "status": saved_order.get("status", "pending"),
         }
 
-        # Keep the price at purchase time for accurate historical sales.
-        # The fallback keeps existing databases working until migration is run.
-        try:
-            unit_price = float(product.get("price") or 0)
-            total_price = round(unit_price * quantity, 2)
-            result = (
-                supabase.table("orders")
-                .insert({
-                    **base_order,
-                    "unit_price": unit_price,
-                    "total_price": total_price,
-                    "currency": product.get("currency") or "YER",
-                })
-                .select("id, order_number, status")
-                .execute()
-            )
-        except Exception as snapshot_error:
-            error_text = str(snapshot_error).lower()
-            missing_snapshot_column = any(
-                column in error_text
-                for column in ("unit_price", "total_price", "currency")
-            ) and any(
-                marker in error_text
-                for marker in ("column", "schema cache", "does not exist", "could not find")
-            )
-            if not missing_snapshot_column:
-                raise
-            logger.warning(
-                "Order price snapshot columns are unavailable; retrying "
-                "with legacy fields. Apply the SQL migration for accurate reports."
-            )
-            result = (
-                supabase.table("orders")
-                .insert(base_order)
-                .select("id, order_number, status")
-                .execute()
-            )
-
-        if not result.data:
-            logger.error("لم تُرجع قاعدة البيانات سجل الطلب.")
-            return None
-
-        return result.data[0]
-
     except Exception:
-        logger.exception("فشل حفظ طلب Telegram في Supabase.")
+        logger.exception("فشل تسجيل الطلب مع التحقق الذري من المخزون.")
         return None
 
 
@@ -629,6 +595,27 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         return "ما اسمك الكامل؟"
 
+    if stage == "quantity_adjust":
+        quantity = parse_quantity(text)
+        if not quantity:
+            return "أرسل كمية صحيحة من 1 إلى 1000."
+
+        with order_lock:
+            state["quantity"] = quantity
+            state["stage"] = "confirmation"
+        persist_pending_telegram_order(chat_id, state)
+
+        return (
+            "تم تحديث الكمية المطلوبة إلى "
+            f"{quantity} قطعة.\n\n"
+            f"المنتج: {state.get('product_name')}\n"
+            f"الاسم: {state.get('customer_name')}\n"
+            f"الهاتف: {state.get('customer_phone')}\n"
+            f"العنوان: {state.get('customer_address')}\n"
+            f"طريقة الدفع المطلوبة: {state.get('payment_method')}\n\n"
+            "هل تؤكد تسجيل الطلب بهذه الكمية؟ أرسل نعم للتأكيد أو لا للإلغاء."
+        )
+
     if stage == "customer_name":
         if len(text) < 2 or len(text) > 150:
             return "يرجى إدخال الاسم بصورة صحيحة."
@@ -714,6 +701,25 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         if normalized in yes_values:
             saved = save_telegram_order(chat_id, state)
 
+            if isinstance(saved, dict) and saved.get("error") == "insufficient_stock":
+                available = max(0, int(saved.get("available_stock") or 0))
+                with order_lock:
+                    state["stage"] = "quantity_adjust"
+                    state["quantity"] = available
+                persist_pending_telegram_order(chat_id, state)
+                return (
+                    "عذرًا، الكمية المطلوبة أكبر من المخزون المتاح حاليًا.\n"
+                    f"المتاح الآن: {available} قطعة.\n"
+                    "أرسل الكمية الجديدة التي تريدها، أو أرسل /cancel للإلغاء."
+                )
+
+            if isinstance(saved, dict) and saved.get("error") == "product_unavailable":
+                clear_pending_telegram_order(chat_id)
+                return (
+                    "عذرًا، أصبح هذا المنتج غير متاح للطلب. "
+                    "لم يتم تسجيل الطلب. يمكنك اختيار منتج آخر."
+                )
+
             if not saved:
                 return (
                     "لم أتمكن من تسجيل الطلب في قاعدة البيانات، "
@@ -727,8 +733,8 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
                 "تم تسجيل طلبك بنجاح في النظام. ✅\n\n"
                 f"رقم الطلب: {saved.get('order_number')}\n"
                 f"الحالة: {saved.get('status')}\n\n"
-                "الحالة الحالية هي قيد المراجعة، وليست تأكيدًا للتوصيل "
-                "أو استلام الدفع."
+                "تم حجز الكمية المطلوبة من المخزون. الحالة الحالية هي قيد المراجعة، "
+                "وليست تأكيدًا للتوصيل أو استلام الدفع."
             )
 
         if normalized in no_values:
