@@ -19,6 +19,8 @@ jobs:
           python-version: "3.12"
       - name: Compile application modules
         run: python -m py_compile main.py admin_dashboard.py bot_logic.py telegram_products.py
+      - name: Run merchant authorization and session tests
+        run: python -m unittest discover -s tests -v
       - name: Check embedded dashboard JavaScript syntax
         shell: bash
         run: |
