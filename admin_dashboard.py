@@ -2197,6 +2197,18 @@ if (auth) {
             existing = existing_result.data[0]
             old_status = existing.get("status")
 
+            # Delivered and cancelled orders are terminal states. Prevent later
+            # edits from silently changing sales totals or reopening a cancelled
+            # order without a dedicated stock-safe workflow.
+            if old_status in ("delivered", "cancelled") and payload.status != old_status:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "لا يمكن تغيير حالة طلب تم تسليمه أو إلغاؤه. "
+                        "إذا كان هناك خطأ، راجعه من خلال المدير المسؤول."
+                    ),
+                )
+
             if payload.status == "cancelled":
                 # Database transaction locks the order and restores reserved stock
                 # only on the first transition to cancelled.
