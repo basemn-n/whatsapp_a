@@ -241,7 +241,7 @@ def get_available_products(business_id: str):
     try:
         result = (
             supabase.table("products")
-            .select("name, description, price, currency, is_available")
+            .select("id, name, description, price, currency, is_available, model_number")
             .eq("business_id", business_id)
             .eq("is_available", True)
             .execute()
@@ -342,17 +342,23 @@ def normalize_text(value: str):
 
 def find_product(products, user_text):
     text = normalize_text(user_text)
-
     if not text:
         return None
 
+    # Prefer the stable model number when product names are duplicated.
     for product in products:
-        name = normalize_text(product.get("name", ""))
-
-        if name and (text == name or name in text):
+        model_number = normalize_text(str(product.get("model_number") or ""))
+        if model_number and model_number == text:
             return product
 
-    return None
+    matches = []
+    for product in products:
+        name = normalize_text(product.get("name", ""))
+        if name and (text == name or name in text):
+            matches.append(product)
+
+    # Never silently choose the first product when names are ambiguous.
+    return matches[0] if len(matches) == 1 else None
 
 
 def parse_quantity(value: str):
@@ -394,6 +400,7 @@ def save_telegram_order(chat_id: int, order_data: dict):
         "customer_address",
         "payment_method",
         "product_name",
+        "product_id",
     )
     if any(
         not str(order_data.get(field, "")).strip()
@@ -423,7 +430,7 @@ def save_telegram_order(chat_id: int, order_data: dict):
             supabase.table("products")
             .select("id, name, price, currency")
             .eq("business_id", business_id)
-            .eq("name", order_data["product_name"])
+            .eq("id", order_data["product_id"])
             .limit(1)
             .execute()
         )
@@ -452,7 +459,7 @@ def save_telegram_order(chat_id: int, order_data: dict):
                 "p_customer_phone": order_data["customer_phone"].strip(),
                 "p_customer_address": order_data["customer_address"].strip(),
                 "p_payment_method": order_data["payment_method"].strip(),
-                "p_product_name": order_data["product_name"],
+                "p_product_id": order_data["product_id"],
                 "p_quantity": quantity,
                 "p_telegram_chat_id": str(chat_id),
             },
@@ -528,6 +535,7 @@ def begin_telegram_order(chat_id: int, business_id: str, user_text: str):
         "business_id": business_id,
         "stage": "quantity" if selected else "product",
         "product_name": selected.get("name") if selected else None,
+        "product_id": selected.get("id") if selected else None,
         "quantity": 1,
     }
     persist_pending_telegram_order(chat_id, state)
@@ -539,8 +547,9 @@ def begin_telegram_order(chat_id: int, business_id: str, user_text: str):
         )
 
     product_lines = [
-        f"- {product.get('name')}: {product.get('price')} "
-        f"{product.get('currency') or 'YER'}"
+        f"- {product.get('name')} "
+        f"(رقم الموديل: {product.get('model_number') or 'غير محدد'}): "
+        f"{product.get('price')} {product.get('currency') or 'YER'}"
         for product in products
     ]
 
@@ -627,6 +636,7 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         with order_lock:
             state["product_name"] = selected["name"]
+            state["product_id"] = selected["id"]
             state["stage"] = "quantity"
         persist_pending_telegram_order(chat_id, state)
 
