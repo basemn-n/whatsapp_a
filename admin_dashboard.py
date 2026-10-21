@@ -691,7 +691,7 @@ form.addEventListener("submit",async event=>{
         try:
             business_result = (
                 supabase.table("businesses")
-                .select("id, name, industry, description")
+                .select("id, name")
                 .eq("id", business_id)
                 .limit(1)
                 .execute()
