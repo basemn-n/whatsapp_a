@@ -5,7 +5,7 @@ ALTER TABLE public.products
   ADD COLUMN IF NOT EXISTS image_url text NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS stock_quantity integer NOT NULL DEFAULT 0;
 
-DO $
+DO $constraint_check$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -16,7 +16,7 @@ BEGIN
       ADD CONSTRAINT products_stock_quantity_nonnegative
       CHECK (stock_quantity >= 0) NOT VALID;
   END IF;
-END $;
+END $constraint_check$;
 
 CREATE INDEX IF NOT EXISTS idx_products_business_category
   ON public.products (business_id, category);
