@@ -924,6 +924,7 @@ onclick="resetProductForm()">إلغاء التعديل</button>
   <div class="stat-card"><span>قيد المراجعة</span><strong id="reportPendingOrders">—</strong></div>
   <div class="stat-card"><span>قيد التجهيز</span><strong id="reportProcessingOrders">—</strong></div>
   <div class="stat-card"><span>تم التسليم</span><strong id="reportDeliveredOrders">—</strong></div>
+  <div class="stat-card"><span>الطلبات الملغاة</span><strong id="reportCancelledOrders">—</strong></div>
 </div>
 <div class="panel">
 <h4>قيمة الطلبات التي تم تسليمها (المبيعات)</h4>
@@ -1006,7 +1007,7 @@ function clearPrivateDashboardData() {
   for (const id of [
     "totalOrders", "pendingOrders", "processingOrders", "deliveredOrders",
     "reportTotalOrders", "reportPendingOrders", "reportProcessingOrders",
-    "reportDeliveredOrders"
+    "reportDeliveredOrders", "reportCancelledOrders"
   ]) {
     const element = document.getElementById(id);
     if (element) element.textContent = "0";
@@ -1367,6 +1368,7 @@ async function loadReports() {
     document.getElementById("reportPendingOrders").textContent = data.pending_orders ?? 0;
     document.getElementById("reportProcessingOrders").textContent = data.processing_orders ?? 0;
     document.getElementById("reportDeliveredOrders").textContent = data.delivered_orders ?? 0;
+    document.getElementById("reportCancelledOrders").textContent = data.cancelled_orders ?? 0;
     document.getElementById("exactRevenue").textContent =
       "المبيعات الدقيقة للطلبات المسلّمة: " + formatMoneyGroups(data.exact_revenue);
     document.getElementById("estimatedRevenue").textContent =
