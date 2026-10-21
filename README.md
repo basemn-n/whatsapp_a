@@ -77,9 +77,27 @@
 
 لا تشارك كلمات المرور أو الرموز السرية في المحادثات أو في مستودع GitHub.
 
-## حالة WhatsApp
+## ربط WhatsApp بمتجر محدد
 
-مسار WhatsApp موجود في التطبيق، لكن تفعيل الرسائل للعملاء يتطلب أن يكون حساب WhatsApp Business/Meta غير مقيّد، وأن تُضبط Webhook وبيانات الوصول الصحيحة. ما دام حساب Meta مقيّدًا، استخدم Telegram كقناة العملاء الأساسية.
+قبل ربط رقم WhatsApp، نفّذ مرة واحدة ملف SQL التالي من **Supabase → SQL Editor**:
+`supabase/migrations/20261022_channel_connections.sql`.
+
+بعد ذلك، اربط معرّف رقم WhatsApp Business (المسمى `phone_number_id` في Meta، وليس رقم الهاتف الظاهر للعميل) بمعرّف المتجر في جدول `channel_connections`. مثال SQL بعد استبدال القيمتين بمعرّفاتك الفعلية:
+
+```sql
+insert into public.channel_connections (channel, external_account_id, business_id)
+values ('whatsapp', 'META_PHONE_NUMBER_ID', 'BUSINESS_UUID')
+on conflict (channel, external_account_id)
+do update set business_id = excluded.business_id;
+```
+
+- `META_PHONE_NUMBER_ID`: معرّف رقم WhatsApp من Meta Developer Dashboard.
+- `BUSINESS_UUID`: معرّف المتجر من جدول `businesses` في Supabase.
+- لا تربط رقم اختبار Meta بمتجر حقيقي لمجرد إزالة رسالة التحذير.
+- لا ترسل مفاتيح الوصول أو أسرار Meta إلى أي شخص، ولا تضعها في GitHub.
+- يجب أن يكون حساب Meta غير مقيّد، وأن يكون الرقم مؤهلًا لإرسال واستقبال الرسائل، وأن تكون إعدادات Webhook وبيانات Render صحيحة.
+
+مسار WhatsApp يستخدم Graph API `v26.0` لإرسال الرسائل وتحميل الوسائط. نجاح النشر أو وصول حدث الاختبار لا يعني وحده أن رسائل الإنتاج تعمل؛ يلزم اختبار رقم فعلي مربوط بمتجر بعد إتاحة الرقم في Meta.
 
 ## تنبيه تشغيلي
 
