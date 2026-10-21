@@ -926,10 +926,16 @@ onclick="resetProductForm()">إلغاء التعديل</button>
   <div class="stat-card"><span>تم التسليم</span><strong id="reportDeliveredOrders">—</strong></div>
 </div>
 <div class="panel">
-<h4>قيمة الطلبات التي تم تسليمها</h4>
+<h4>قيمة الطلبات التي تم تسليمها (المبيعات)</h4>
 <p id="exactRevenue">المبيعات الدقيقة: —</p>
 <p id="estimatedRevenue">المبيعات التقديرية للطلبات القديمة: —</p>
-<p id="missingRevenue">طلبات لا يمكن تقدير قيمتها: —</p>
+<p id="missingRevenue">طلبات مسلّمة بلا سعر يمكن حسابه: —</p>
+</div>
+<div class="panel">
+<h4>الطلبات الملغاة (لا تُحتسب مبيعات)</h4>
+<p id="cancelledExactValue">قيمة الطلبات الملغاة المحفوظة: —</p>
+<p id="cancelledEstimatedValue">تقدير الطلبات الملغاة القديمة: —</p>
+<p id="cancelledMissingValue">طلبات ملغاة بلا سعر يمكن حسابه: —</p>
 </div>
 </section>
 
@@ -1005,7 +1011,7 @@ function clearPrivateDashboardData() {
     const element = document.getElementById(id);
     if (element) element.textContent = "0";
   }
-  for (const id of ["exactRevenue", "estimatedRevenue", "missingRevenue"]) {
+  for (const id of ["exactRevenue", "estimatedRevenue", "missingRevenue", "cancelledExactValue", "cancelledEstimatedValue", "cancelledMissingValue"]) {
     const element = document.getElementById(id);
     if (element) element.textContent = "—";
   }
@@ -1367,6 +1373,12 @@ async function loadReports() {
       "تقدير الطلبات القديمة حسب السعر الحالي: " + formatMoneyGroups(data.estimated_revenue);
     document.getElementById("missingRevenue").textContent =
       "طلبات مسلّمة بلا سعر يمكن حسابه: " + (data.missing_price_orders ?? 0);
+    document.getElementById("cancelledExactValue").textContent =
+      "قيمة الطلبات الملغاة المحفوظة: " + formatMoneyGroups(data.cancelled_exact_value);
+    document.getElementById("cancelledEstimatedValue").textContent =
+      "تقدير الطلبات الملغاة القديمة حسب السعر الحالي: " + formatMoneyGroups(data.cancelled_estimated_value);
+    document.getElementById("cancelledMissingValue").textContent =
+      "طلبات ملغاة بلا سعر يمكن حسابه: " + (data.cancelled_missing_price_orders ?? 0);
     setMessage("تم تحديث تقرير المبيعات.");
   } catch (error) {
     setMessage(error.message);
@@ -2069,6 +2081,9 @@ if (auth) {
             exact_revenue = {}
             estimated_revenue = {}
             missing_price_orders = 0
+            cancelled_exact_value = {}
+            cancelled_estimated_value = {}
+            cancelled_missing_price_orders = 0
 
             for order in orders:
                 status = order.get("status")
@@ -2081,8 +2096,16 @@ if (auth) {
                 elif status == "cancelled":
                     counts["cancelled_orders"] += 1
 
-                if status != "delivered":
+                # Delivered orders contribute to sales; cancelled orders are
+                # reported separately and never counted as realized revenue.
+                if status not in ("delivered", "cancelled"):
                     continue
+
+                is_cancelled = status == "cancelled"
+                exact_target = cancelled_exact_value if is_cancelled else exact_revenue
+                estimated_target = (
+                    cancelled_estimated_value if is_cancelled else estimated_revenue
+                )
 
                 try:
                     quantity = float(order.get("quantity") or 0)
@@ -2091,7 +2114,7 @@ if (auth) {
                     if order.get("total_price") is not None:
                         amount = float(order["total_price"])
                         currency = order.get("currency") or "YER"
-                        target = exact_revenue
+                        target = exact_target
                     else:
                         key = (
                             str(order.get("business_id") or ""),
@@ -2099,14 +2122,20 @@ if (auth) {
                         )
                         product = product_prices.get(key)
                         if not product or product.get("price") is None:
-                            missing_price_orders += 1
+                            if is_cancelled:
+                                cancelled_missing_price_orders += 1
+                            else:
+                                missing_price_orders += 1
                             continue
                         amount = float(product["price"]) * quantity
                         currency = product.get("currency") or "YER"
-                        target = estimated_revenue
+                        target = estimated_target
                     target[currency] = round(target.get(currency, 0) + amount, 2)
                 except (TypeError, ValueError):
-                    missing_price_orders += 1
+                    if is_cancelled:
+                        cancelled_missing_price_orders += 1
+                    else:
+                        missing_price_orders += 1
 
             return {
                 "total_orders": len(orders),
@@ -2114,6 +2143,9 @@ if (auth) {
                 "exact_revenue": exact_revenue,
                 "estimated_revenue": estimated_revenue,
                 "missing_price_orders": missing_price_orders,
+                "cancelled_exact_value": cancelled_exact_value,
+                "cancelled_estimated_value": cancelled_estimated_value,
+                "cancelled_missing_price_orders": cancelled_missing_price_orders,
                 "limit": 1000,
             }
         except Exception:
