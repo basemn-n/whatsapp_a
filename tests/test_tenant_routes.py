@@ -55,6 +55,8 @@ class MerchantTenantRouteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.environ["MERCHANT_SESSION_SECRET"] = "test-only-secret-never-use-in-production"
+        os.environ["ADMIN_USERNAME"] = "test-admin"
+        os.environ["ADMIN_PASSWORD"] = "test-only-admin-password"
         app = FastAPI()
         app.include_router(create_admin_router(FakeSupabase()))
         cls.client = TestClient(app)
