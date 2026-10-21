@@ -1,0 +1,108 @@
+"""Route-level tests for merchant tenant isolation.
+
+These tests use a fake Supabase client and never touch production data.
+"""
+import os
+import unittest
+from types import SimpleNamespace
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from admin_dashboard import _issue_merchant_token, create_admin_router
+
+
+MERCHANT_BUSINESS_ID = "business-a"
+OTHER_BUSINESS_ID = "business-b"
+
+
+class FakeQuery:
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def select(self, *_args, **_kwargs):
+        return self
+
+    def eq(self, *_args, **_kwargs):
+        return self
+
+    def order(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def execute(self):
+        if self.table_name == "merchant_accounts":
+            rows = [{
+                "username": "merchant-a",
+                "business_id": MERCHANT_BUSINESS_ID,
+                "is_active": True,
+            }]
+        elif self.table_name == "businesses":
+            rows = [{"id": MERCHANT_BUSINESS_ID, "name": "متجر تجريبي"}]
+        else:
+            rows = []
+        return SimpleNamespace(data=rows)
+
+
+class FakeSupabase:
+    def table(self, table_name):
+        return FakeQuery(table_name)
+
+
+class MerchantTenantRouteTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MERCHANT_SESSION_SECRET"] = "test-only-secret-never-use-in-production"
+        app = FastAPI()
+        app.include_router(create_admin_router(FakeSupabase()))
+        cls.client = TestClient(app)
+        cls.token = _issue_merchant_token("merchant-a", MERCHANT_BUSINESS_ID)
+        cls.headers = {"Authorization": f"Bearer {cls.token}"}
+
+    def test_merchant_can_read_own_products(self):
+        response = self.client.get(
+            "/api/admin/products",
+            params={"business_id": MERCHANT_BUSINESS_ID},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"products": []})
+
+    def test_merchant_cannot_read_another_business_products(self):
+        response = self.client.get(
+            "/api/admin/products",
+            params={"business_id": OTHER_BUSINESS_ID},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_merchant_cannot_read_another_business_orders(self):
+        response = self.client.get(
+            "/api/admin/orders",
+            params={"business_id": OTHER_BUSINESS_ID},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_merchant_cannot_read_another_business_sales_report(self):
+        response = self.client.get(
+            "/api/admin/reports/sales",
+            params={"business_id": OTHER_BUSINESS_ID},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_merchant_cannot_change_another_business_order_status(self):
+        response = self.client.patch(
+            "/api/admin/orders/order-123/status",
+            params={"business_id": OTHER_BUSINESS_ID},
+            headers=self.headers,
+            json={"status": "cancelled"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+
+if __name__ == "__main__":
+    unittest.main()
