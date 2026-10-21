@@ -1,4 +1,10 @@
 -- Atomically reserve merchant stock and create a Telegram order.
+-- Ensure historical price snapshot columns exist before the RPC references them.
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS unit_price numeric(12, 2),
+    ADD COLUMN IF NOT EXISTS total_price numeric(12, 2),
+    ADD COLUMN IF NOT EXISTS currency text;
+
 -- Execute through the application's service-role Supabase client only.
 CREATE OR REPLACE FUNCTION public.create_telegram_order_with_stock(
     p_business_id uuid,
