@@ -734,7 +734,7 @@ table{width:100%;border-collapse:collapse;min-width:850px}
 th,td{padding:13px 12px;border-bottom:1px solid #edf0f6;text-align:right;vertical-align:middle}
 th{background:#f4f7fc;color:#4b5b75;font-size:13px;font-weight:750;white-space:nowrap}
 tbody tr:hover{background:#fafbff}
-td select{max-width:180px;background:white}
+td select{max-width:220px;min-width:170px;background:white} td button{white-space:nowrap;padding:9px 13px}
 #msg{margin:14px 0;padding:12px 15px;background:#eef4ff;color:#314c9c;border:1px solid #dce7ff;border-radius:12px;white-space:pre-wrap}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .full{grid-column:1/-1}
@@ -1273,6 +1273,8 @@ function renderOrders() {
 
     const statusCell = document.createElement("td");
     const select = document.createElement("select");
+    select.className = "order-status-select";
+    select.setAttribute("aria-label", "حالة الطلب رقم " + (order.order_number ?? order.id));
 
     for (const [value, label] of Object.entries(labels)) {
       const option = document.createElement("option");
@@ -1287,7 +1289,8 @@ function renderOrders() {
 
     const actionCell = document.createElement("td");
     const button = document.createElement("button");
-    button.textContent = "حفظ";
+    button.textContent = "حفظ الحالة";
+    button.setAttribute("aria-label", "حفظ حالة الطلب رقم " + (order.order_number ?? order.id));
 
     button.onclick = async () => {
       button.disabled = true;
