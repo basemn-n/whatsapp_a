@@ -128,6 +128,17 @@ def _read_merchant_token(token: str):
         return None
 
 
+def ensure_business_access(business_id, actor):
+    """Allow admins all businesses and merchants only their assigned business."""
+    if actor.get("role") == "admin":
+        return
+    if str(actor.get("business_id") or "") != str(business_id or ""):
+        raise HTTPException(
+            status_code=403,
+            detail="لا تملك صلاحية الوصول إلى بيانات هذا النشاط التجاري",
+        )
+
+
 STATUSES = {
     "pending": "قيد المراجعة",
     "approved": "تمت الموافقة",
@@ -276,15 +287,6 @@ def create_admin_router(supabase):
                 headers={"WWW-Authenticate": "Basic"},
             )
         return {"role": "admin", "business_id": None}
-
-    def ensure_business_access(business_id, actor):
-        if actor.get("role") == "admin":
-            return
-        if str(actor.get("business_id") or "") != str(business_id or ""):
-            raise HTTPException(
-                status_code=403,
-                detail="لا تملك صلاحية الوصول إلى بيانات هذا النشاط التجاري",
-            )
 
     @router.post("/api/merchant/login")
     def merchant_login(payload: MerchantLogin):
