@@ -834,7 +834,7 @@ def send_whatsapp_message(to_phone: str, message_text: str, phone_number_id: str
         return
 
     url = (
-        f"https://graph.facebook.com/v19.0/"
+        f"https://graph.facebook.com/v26.0/"
         f"{active_phone_number_id}/messages"
     )
 
@@ -870,7 +870,7 @@ def download_whatsapp_media(media_id: str):
         "Authorization": f"Bearer {WHATSAPP_TOKEN}"
     }
 
-    endpoint = f"https://graph.facebook.com/v19.0/{media_id}"
+    endpoint = f"https://graph.facebook.com/v26.0/{media_id}"
 
     try:
         response = requests.get(
