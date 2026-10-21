@@ -130,5 +130,54 @@ class MerchantTenantRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+    def test_merchant_business_list_is_limited_to_own_business(self):
+        response = self.client.get("/api/admin/businesses", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        businesses = response.json()["businesses"]
+        self.assertEqual([item["id"] for item in businesses], [MERCHANT_BUSINESS_ID])
+
+    def test_merchant_cannot_list_signup_requests(self):
+        response = self.client.get(
+            "/api/admin/merchant-signup-requests",
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_merchant_cannot_review_signup_requests(self):
+        response = self.client.patch(
+            "/api/admin/merchant-signup-requests/request-123",
+            headers=self.headers,
+            json={"action": "reject", "reason": "test"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_merchant_cannot_create_merchant_accounts(self):
+        response = self.client.post(
+            "/api/admin/merchant-accounts",
+            headers=self.headers,
+            json={
+                "business_id": MERCHANT_BUSINESS_ID,
+                "username": "merchant-b",
+                "password": "test-only-long-password",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_products_api_requires_authentication(self):
+        response = self.client.get(
+            "/api/admin/products",
+            params={"business_id": MERCHANT_BUSINESS_ID},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_invalid_bearer_token_is_rejected(self):
+        response = self.client.get(
+            "/api/admin/products",
+            params={"business_id": MERCHANT_BUSINESS_ID},
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+        self.assertEqual(response.status_code, 401)
+
+
 if __name__ == "__main__":
     unittest.main()
