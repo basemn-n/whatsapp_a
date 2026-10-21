@@ -928,10 +928,8 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 </div>
 <div class="panel">
 <h4>قيمة الطلبات التي تم تسليمها (المبيعات)</h4>
-<div class="stats">
-  <div class="stat-card"><span>المبيعات المحفوظة للطلبات المسلّمة</span><strong id="realizedRevenue">—</strong></div>
-  <div class="stat-card"><span>إجمالي القطع المسلّمة</span><strong id="deliveredQuantity">—</strong></div>
-</div>
+<p><strong>المبيعات المحفوظة للطلبات المسلّمة:</strong> <span id="realizedRevenue">—</span></p>
+<p><strong>إجمالي القطع المسلّمة:</strong> <span id="deliveredQuantity">—</span></p>
 <p>المبيعات المحفوظة هي المبالغ المسجلة وقت الطلب، ولا تشمل التقديرات أو الطلبات غير المسلّمة.</p>
 <p id="exactRevenue">المبيعات الدقيقة: —</p>
 <p id="estimatedRevenue">المبيعات التقديرية للطلبات القديمة: —</p>
