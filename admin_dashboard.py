@@ -2111,58 +2111,73 @@ if (auth) {
         ensure_business_access(business_id, _admin)
         get_business_or_404(business_id)
         if payload.status not in STATUSES:
-            raise HTTPException(
-                status_code=400,
-                detail="حالة غير مسموح بها",
-            )
+            raise HTTPException(status_code=400, detail="حالة غير مسموح بها")
 
         try:
-            # قراءة الطلب وحالته السابقة ووجهة إشعار Telegram.
             existing_result = (
                 supabase.table("orders")
-                .select(
-                    "id, order_number, customer_name, product_name, "
-                    "status, telegram_chat_id"
-                )
+                .select("id, order_number, customer_name, product_name, status, telegram_chat_id")
                 .eq("id", order_id)
                 .eq("business_id", business_id)
                 .limit(1)
                 .execute()
             )
-
             if not existing_result.data:
-                raise HTTPException(
-                    status_code=404,
-                    detail="الطلب غير موجود",
-                )
+                raise HTTPException(status_code=404, detail="الطلب غير موجود")
 
             existing = existing_result.data[0]
             old_status = existing.get("status")
 
-            # تحديث حالة الطلب في قاعدة البيانات أولًا.
-            updated_result = (
-                supabase.table("orders")
-                .update({"status": payload.status})
-                .eq("id", order_id)
-                .eq("business_id", business_id)
-                .select("*")
-                .execute()
-            )
-
-            if not updated_result.data:
-                raise HTTPException(
-                    status_code=404,
-                    detail="تعذر تحديث الطلب أو أن الطلب غير موجود",
+            if payload.status == "cancelled":
+                # Database transaction locks the order and restores reserved stock
+                # only on the first transition to cancelled.
+                rpc_result = supabase.rpc(
+                    "update_telegram_order_status_with_stock",
+                    {
+                        "p_business_id": business_id,
+                        "p_order_id": order_id,
+                        "p_new_status": payload.status,
+                    },
+                ).execute()
+                result_data = rpc_result.data
+                if isinstance(result_data, list):
+                    result_data = result_data[0] if result_data else None
+                if not isinstance(result_data, dict) or not result_data.get("success"):
+                    reason = result_data.get("reason") if isinstance(result_data, dict) else "unknown"
+                    if reason == "order_not_found":
+                        raise HTTPException(status_code=404, detail="الطلب غير موجود")
+                    if reason == "cannot_cancel_after_shipping":
+                        raise HTTPException(
+                            status_code=409,
+                            detail="لا يمكن إلغاء الطلب بعد شحنه أو تسليمه.",
+                        )
+                    if reason == "product_not_found":
+                        raise HTTPException(
+                            status_code=409,
+                            detail="تعذر العثور على المنتج المرتبط بالطلب؛ لم يتم تغيير الحالة.",
+                        )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="تعذر إلغاء الطلب وإرجاع المخزون بأمان.",
+                    )
+                updated = result_data.get("order") or {}
+            else:
+                updated_result = (
+                    supabase.table("orders")
+                    .update({"status": payload.status})
+                    .eq("id", order_id)
+                    .eq("business_id", business_id)
+                    .select("*")
+                    .execute()
                 )
+                if not updated_result.data:
+                    raise HTTPException(status_code=404, detail="تعذر تحديث الطلب أو أن الطلب غير موجود")
+                updated = updated_result.data[0]
 
-            updated = updated_result.data[0]
             notification_sent = False
-
-            # لا نرسل إشعارًا إذا لم تتغير الحالة فعليًا.
             if old_status != payload.status:
                 notification_sent = send_telegram_status_notification(
-                    existing.get("telegram_chat_id"),
-                    updated,
+                    existing.get("telegram_chat_id"), updated
                 )
 
             return {
@@ -2179,7 +2194,7 @@ if (auth) {
                 status_code=500,
                 detail=(
                     "تعذر تحديث حالة الطلب. تحقق من إعدادات قاعدة البيانات "
-                    "ووجود عمود telegram_chat_id في جدول orders."
+                    "ووجود الأعمدة المطلوبة في جدول orders."
                 ),
             )
 
