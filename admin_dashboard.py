@@ -155,6 +155,13 @@ class StatusUpdate(BaseModel):
     status: str
 
 
+class BusinessProfileUpdate(BaseModel):
+    business_id: str
+    name: str = Field(min_length=2, max_length=160)
+    industry: str = Field(default="", max_length=100)
+    description: str = Field(default="", max_length=2000)
+
+
 class ProductCreate(BaseModel):
     business_id: str
     name: str = Field(min_length=1, max_length=200)
@@ -693,7 +700,7 @@ form.addEventListener("submit",async event=>{
         try:
             business_result = (
                 supabase.table("businesses")
-                .select("id, name")
+                 .select("id, name, industry, description")
                 .eq("id", business_id)
                 .limit(1)
                 .execute()
@@ -924,6 +931,7 @@ onclick="showTab('orders')">الطلبات</button>
 onclick="showTab('products')">المنتجات</button>
 <button id="reportsTab"
 onclick="showTab('reports')">تقارير المبيعات</button>
+<button id="settingsTab" onclick="showTab('settings')">إعدادات المتجر</button>
 <button id="requestsTab" class="hidden"
 onclick="showTab('requests')">طلبات التجار</button>
 <button id="aiUsageTab" class="hidden" onclick="showTab('ai-usage')">استخدام الذكاء الاصطناعي</button>
@@ -1072,6 +1080,20 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <tbody id="productRows"></tbody>
 </table>
 </div>
+</section>
+
+<section id="settingsPanel" class="panel hidden">
+<h3>إعدادات المتجر</h3>
+<p>حدّث الاسم والنشاط والوصف الذي يظهر في صفحة متجرك العامة. هذه البيانات تخص المتجر المحدد فقط.</p>
+<form id="businessProfileForm">
+<input type="hidden" id="profileBusinessId">
+<div class="grid">
+<div><label for="profileStoreName">اسم المتجر *</label><input id="profileStoreName" maxlength="160" required minlength="2"></div>
+<div><label for="profileIndustry">نوع النشاط</label><input id="profileIndustry" maxlength="100" placeholder="مثل: عبايات، إلكترونيات، ملابس"></div>
+<div class="full"><label for="profileDescription">نبذة عن المتجر وسياسة الخدمة</label><textarea id="profileDescription" rows="5" maxlength="2000" placeholder="اكتب وصفًا واضحًا للمتجر والخدمات التي يقدمها. لا تضع معلومات سرية هنا."></textarea><small>تظهر النبذة في صفحة المتجر العامة؛ لا تضف بيانات خاصة أو معلومات دخول.</small></div>
+</div>
+<div class="form-actions"><button id="saveBusinessProfileBtn" type="submit">حفظ إعدادات المتجر</button><button type="button" class="secondary" onclick="loadBusinessProfile()">إعادة تحميل</button></div>
+</form>
 </section>
 
 <section id="reportsPanel" class="panel hidden">
@@ -1351,6 +1373,8 @@ function showTab(tab) {
 
   document.getElementById("reportsPanel")
     .classList.toggle("hidden", tab !== "reports");
+  document.getElementById("settingsPanel")
+    .classList.toggle("hidden", tab !== "settings");
   document.getElementById("requestsPanel")
     .classList.toggle("hidden", tab !== "requests");
   document.getElementById("aiUsagePanel")
@@ -1366,6 +1390,8 @@ function showTab(tab) {
 
   document.getElementById("reportsTab")
     .classList.toggle("active", tab === "reports");
+  document.getElementById("settingsTab")
+    .classList.toggle("active", tab === "settings");
   document.getElementById("requestsTab")
     .classList.toggle("active", tab === "requests");
   document.getElementById("aiUsageTab")
@@ -1381,6 +1407,8 @@ function showTab(tab) {
     loadBusinesses();
   } else if (tab === "reports") {
     loadReports();
+  } else if (tab === "settings") {
+    loadBusinessProfile();
   } else {
     loadOrders();
   }
@@ -1444,6 +1472,58 @@ async function loadOverview() {
     setMessage(error.message || "تعذر تحميل النظرة العامة.");
   }
 }
+
+async function loadBusinessProfile() {
+  try {
+    if (!(await ensureLogin())) return;
+    const businessId = document.getElementById("businessSelect").value;
+    if (!businessId) {
+      setMessage("اختر متجرًا أولًا.");
+      return;
+    }
+    setMessage("جارٍ تحميل إعدادات المتجر...");
+    const data = await api("/api/admin/business-profile?business_id=" + encodeURIComponent(businessId));
+    const business = data.business || {};
+    document.getElementById("profileBusinessId").value = business.id || businessId;
+    document.getElementById("profileStoreName").value = business.name || "";
+    document.getElementById("profileIndustry").value = business.industry || "";
+    document.getElementById("profileDescription").value = business.description || "";
+    setMessage("تم تحميل إعدادات المتجر.");
+  } catch (error) {
+    setMessage(error.message || "تعذر تحميل إعدادات المتجر.");
+  }
+}
+
+document.getElementById("businessProfileForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = document.getElementById("saveBusinessProfileBtn");
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId || businessId !== document.getElementById("profileBusinessId").value) {
+    setMessage("تغير المتجر المحدد؛ أعد تحميل إعداداته قبل الحفظ.");
+    return;
+  }
+  button.disabled = true;
+  try {
+    const result = await api("/api/admin/business-profile", {
+      method: "PATCH",
+      body: JSON.stringify({
+        business_id: businessId,
+        name: document.getElementById("profileStoreName").value.trim(),
+        industry: document.getElementById("profileIndustry").value.trim(),
+        description: document.getElementById("profileDescription").value.trim()
+      })
+    });
+    const updated = result.business || {};
+    businesses = businesses.map(b => b.id === businessId ? {...b, name: updated.name || document.getElementById("profileStoreName").value.trim()} : b);
+    const option = [...document.getElementById("businessSelect").options].find(o => o.value === businessId);
+    if (option) option.textContent = updated.name || document.getElementById("profileStoreName").value.trim();
+    setMessage("تم حفظ إعدادات المتجر بنجاح. سيظهر الاسم والنشاط والنبذة في صفحة المتجر العامة.");
+  } catch (error) {
+    setMessage(error.message || "تعذر حفظ إعدادات المتجر.");
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function loadAIUsage() {
   const button = document.getElementById("refreshAIUsageBtn");
@@ -2249,6 +2329,58 @@ if (auth) {
                 status_code=500,
                 detail="تعذر تحميل الأنشطة التجارية",
             )
+
+    @router.get("/api/admin/business-profile")
+    def get_business_profile(
+        business_id: str,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        try:
+            result = (
+                supabase.table("businesses")
+                .select("id, name, industry, description")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
+            if not result.data:
+                raise HTTPException(status_code=404, detail="المتجر غير موجود")
+            return {"business": result.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر تحميل إعدادات المتجر.")
+            raise HTTPException(status_code=500, detail="تعذر تحميل إعدادات المتجر")
+
+    @router.patch("/api/admin/business-profile")
+    def update_business_profile(
+        payload: BusinessProfileUpdate,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _admin)
+        name = payload.name.strip()
+        if len(name) < 2:
+            raise HTTPException(status_code=400, detail="اسم المتجر يجب أن يتكون من حرفين على الأقل")
+        try:
+            result = (
+                supabase.table("businesses")
+                .update({
+                    "name": name,
+                    "industry": payload.industry.strip(),
+                    "description": payload.description.strip(),
+                })
+                .eq("id", payload.business_id)
+                .execute()
+            )
+            if not result.data:
+                raise HTTPException(status_code=404, detail="لم يتم العثور على المتجر لتحديثه")
+            return {"success": True, "business": result.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر حفظ إعدادات المتجر.")
+            raise HTTPException(status_code=500, detail="تعذر حفظ إعدادات المتجر")
 
     @router.get("/api/admin/products")
     def list_products(
