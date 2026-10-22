@@ -11,7 +11,7 @@ import csv
 import io
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
@@ -1349,7 +1349,7 @@ async function api(url, options = {}) {
     "Authorization": auth
   };
 
-  if (options.body) {
+  if (options.body && !(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -2831,7 +2831,7 @@ if (auth) {
 
     @router.post("/api/admin/products/extract-catalog")
     def extract_product_catalog(
-        business_id: str,
+        business_id: str = Form(...),
         file: UploadFile = File(...),
         _admin=Depends(check_admin),
     ):
