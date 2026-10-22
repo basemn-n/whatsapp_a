@@ -34,9 +34,12 @@ FACEBOOK_VERIFY_TOKEN = os.getenv("FACEBOOK_VERIFY_TOKEN", "").strip()
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
-# Empty by default: never silently import a catalog into a hard-coded business.
-TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv("TELEGRAM_PRODUCTS_BUSINESS_ID", "").strip()
+TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "-1003928665915").strip()
+# Explicitly approved product group -> merchant mapping; Render env vars can override.
+TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv(
+    "TELEGRAM_PRODUCTS_BUSINESS_ID",
+    "68194d49-7ba4-4f49-867e-338b048d63e1",
+).strip()
 TELEGRAM_PRODUCTS_CURRENCY = os.getenv("TELEGRAM_PRODUCTS_CURRENCY", "YER").strip().upper()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -1294,10 +1297,23 @@ def download_telegram_audio(file_id: str):
 
 
 async def process_telegram_update(update: dict):
-    # Product publishing channels are import-only: never reply to their posts.
-    # Customer support is restricted to private chats to avoid group spam.
-    # Import product posts from the configured Telegram source channel.
+    # Product publishing sources are import-only: never reply to their posts.
     source_post = update.get("channel_post") or update.get("edited_channel_post")
+    source_kind = "channel_post" if source_post else ""
+    if not source_post:
+        candidate = update.get("message") or {}
+        candidate_chat = candidate.get("chat") or {}
+        candidate_chat_id = str(candidate_chat.get("id") or "")
+        # Group messages are catalog imports only for the explicitly configured
+        # product group. All other groups remain ignored to prevent spam/leaks.
+        if (
+            str(candidate_chat.get("type") or "") in ("group", "supergroup")
+            and TELEGRAM_PRODUCTS_CHAT_ID
+            and candidate_chat_id == TELEGRAM_PRODUCTS_CHAT_ID
+        ):
+            source_post = candidate
+            source_kind = "group_message"
+
     if source_post:
         source_chat = source_post.get("chat") or {}
         source_chat_id = str(source_chat.get("id", ""))
@@ -1314,8 +1330,6 @@ async def process_telegram_update(update: dict):
         )
         if configured_chat_id and matches_source:
             try:
-                # Prefer an explicit per-channel tenant mapping. The environment
-                # fallback is only honored when the owner deliberately sets it.
                 business_id = await asyncio.to_thread(
                     get_channel_business_id, "telegram_products", source_chat_id
                 )
@@ -1323,11 +1337,12 @@ async def process_telegram_update(update: dict):
                     business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or None
                 if not business_id:
                     logger.error(
-                        "Telegram product import skipped: map this source channel "
-                        "to a business in channel_connections or explicitly set "
-                        "TELEGRAM_PRODUCTS_BUSINESS_ID."
+                        "Telegram product import skipped: source is not mapped "
+                        "to a merchant business."
                     )
                     return
+                # Only import actual catalog text/captions with explicit prices;
+                # importer skips ambiguous posts. Never send a group reply.
                 result = await asyncio.to_thread(
                     import_telegram_product_post,
                     source_post,
@@ -1336,7 +1351,8 @@ async def process_telegram_update(update: dict):
                     TELEGRAM_PRODUCTS_CURRENCY,
                 )
                 logger.info(
-                    "Telegram product post processed: chat_id=%s result=%s",
+                    "Telegram product source processed: kind=%s chat_id=%s result=%s",
+                    source_kind or "channel_post",
                     source_chat_id,
                     result,
                 )
@@ -1348,7 +1364,6 @@ async def process_telegram_update(update: dict):
     chat = message.get("chat") or {}
     chat_type = str(chat.get("type") or "unknown")
     if chat_type != "private":
-        # Diagnostic only: log group identity and message type, never message text.
         logger.info(
             "Telegram non-private update received: chat_id=%s chat_type=%s "
             "chat_title=%s message_id=%s; customer reply skipped.",
@@ -1358,206 +1373,6 @@ async def process_telegram_update(update: dict):
             str(message.get("message_id") or ""),
         )
         return
-    chat_id = chat.get("id")
-    user_text = (message.get("text") or "").strip()
-    caption = (message.get("caption") or "").strip()
-    photos = message.get("photo") or []
-    audio_attachment = message.get("voice") or message.get("audio")
-    command = user_text.split(maxsplit=1)[0].lower() if user_text else ""
-
-    if not chat_id or (not user_text and not photos and not audio_attachment):
-        return
-
-    if user_text.startswith("/start"):
-        parts = user_text.split(maxsplit=1)
-        payload = parts[1].strip() if len(parts) > 1 else ""
-        business_id = None
-
-        if payload:
-            try:
-                business_id = str(uuid.UUID(payload))
-            except ValueError:
-                business_id = None
-
-        linked = False
-        if business_id:
-            linked = await asyncio.to_thread(
-                save_telegram_business, chat_id, business_id
-            )
-
-        if linked:
-            reply = (
-                "مرحبًا بك! 👋\n"
-                "تم ربط هذه المحادثة بالنشاط التجاري.\n"
-                "اكتب /products لعرض المنتجات والأسعار.\n"
-                "اكتب /order لبدء طلب جديد، أو /cancel لإلغاء الطلب الجاري.\n"
-                "يمكنك أيضًا إرسال سؤالك أو صورة أو رسالة صوتية."
-            )
-        else:
-            reply = (
-                "مرحبًا بك! 👋\n"
-                "أنا مساعد خدمة العملاء الذكي.\n"
-                "افتح رابط البوت الخاص بالمتجر المنشور في قناة المنتجات لربط المحادثة.\n"
-                "بعد الربط استخدم /products لعرض المنتجات و /order لبدء طلب.\n"
-                "يمكنك أيضًا إرسال سؤالك أو صورة أو رسالة صوتية."
-            )
-
-    elif command == "/help":
-        reply = (
-            "مساعدة سريعة 🤝\n"
-            "/products — عرض المنتجات المتاحة وأسعارها\n"
-            "/order — بدء طلب جديد\n"
-            "/cancel — إلغاء الطلب الجاري\n"
-            "يمكنك إرسال سؤالك كتابةً أو بصورة أو برسالة صوتية."
-        )
-
-    elif command == "/products":
-        business_id = await asyncio.to_thread(
-            get_telegram_business_id, chat_id
-        )
-        products = (
-            await asyncio.to_thread(get_available_products, business_id)
-            if business_id else []
-        )
-        if not business_id:
-            reply = (
-                "لم يتم ربط هذه المحادثة بمتجر بعد. "
-                "افتح رابط البوت الخاص بالمتجر ثم اضغط Start."
-            )
-        elif not products:
-            reply = "لا توجد منتجات متاحة حاليًا."
-        else:
-            lines = ["المنتجات المتاحة حاليًا:"]
-            for product in products[:50]:
-                name = product.get("name") or "منتج"
-                price = product.get("price")
-                currency = product.get("currency") or "YER"
-                description = (product.get("description") or "").strip()
-                line = f"• {name} — {price} {currency}"
-                if description:
-                    line += f"\n  {description[:180]}"
-                lines.append(line)
-            lines.append("\nلطلب منتج، اكتب /order ثم اتبع التعليمات.")
-            reply = "\n".join(lines)
-
-    elif command == "/order":
-        business_id = await asyncio.to_thread(
-            get_telegram_business_id, chat_id
-        )
-        if not business_id:
-            reply = (
-                "لم يتم ربط هذه المحادثة بمتجر بعد. "
-                "افتح رابط البوت الخاص بالمتجر ثم اضغط Start."
-            )
-        else:
-            reply = await asyncio.to_thread(
-                begin_telegram_order, chat_id, business_id, ""
-            )
-
-    elif user_text.startswith("/cancel"):
-        clear_pending_telegram_order(chat_id)
-        reply = "تم إلغاء الطلب الجاري."
-
-    elif photos:
-        business_id = await asyncio.to_thread(
-            get_telegram_business_id, chat_id
-        )
-        if not business_id:
-            reply = (
-                "هذه المحادثة غير مرتبطة بمتجر بعد. افتح رابط البوت الخاص "
-                "بالمتجر واضغط Start أولًا حتى أساعدك من كتالوجه الصحيح."
-            )
-        else:
-            # Telegram includes multiple sizes; the last item is usually the largest.
-            photo = photos[-1]
-            image_bytes = await asyncio.to_thread(
-                download_telegram_photo,
-                photo.get("file_id"),
-            )
-
-            if not image_bytes:
-                reply = (
-                    "عذرًا، لم أتمكن من تحميل الصورة أو أن حجمها أكبر من الحد المسموح. "
-                    "أرسل صورة أصغر من 10 ميجابايت وحاول مجددًا."
-                )
-            else:
-                try:
-                    context = await asyncio.to_thread(get_business_context, business_id)
-                    prompt = caption or (
-                        "حلّل الصورة المرسلة من العميل، واشرح ما يظهر فيها "
-                        "وساعده اعتمادًا على معلومات النشاط التجاري."
-                    )
-                    reply = await asyncio.to_thread(
-                        generate_ai_response,
-                        f"telegram_{chat_id}",
-                        prompt,
-                        image_bytes,
-                        context,
-                        f"telegram_{chat_id}_{business_id}",
-                        business_id,
-                    )
-                except Exception:
-                    logger.exception("Failed to process Telegram photo with AI.")
-                    reply = (
-                        "وصلتني الصورة، لكن تعذّر تحليلها الآن. "
-                        "يرجى المحاولة مرة أخرى أو كتابة سؤالك نصيًا."
-                    )
-
-    elif audio_attachment:
-        audio_result = await asyncio.to_thread(
-            download_telegram_audio,
-            audio_attachment.get("file_id"),
-        )
-
-        if not audio_result:
-            reply = (
-                "عذرًا، لم أتمكن من تحميل الرسالة الصوتية. "
-                "جرّب إرسال تسجيل أقصر، أو اكتب رسالتك نصيًا."
-            )
-        else:
-            audio_bytes, audio_suffix = audio_result
-            temp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(
-                    delete=False,
-                    suffix=audio_suffix,
-                ) as temp_audio:
-                    temp_audio.write(audio_bytes)
-                    temp_path = temp_audio.name
-
-                transcript = await asyncio.to_thread(
-                    transcribe_audio,
-                    temp_path,
-                )
-                logger.info(
-                    "Telegram voice transcribed successfully (chat_id=%s, chars=%s).",
-                    chat_id,
-                    len(transcript),
-                )
-                recognized_text = transcript
-                if caption:
-                    recognized_text = f"{caption}\n{transcript}"
-                reply = await respond_to_telegram_text(chat_id, recognized_text)
-            except Exception as exc:
-                logger.exception("Failed to transcribe/process Telegram voice message.")
-                if "25 ميجابايت" in str(exc):
-                    reply = "حجم الرسالة الصوتية كبير جدًا. أرسل تسجيلًا أقصر من فضلك."
-                else:
-                    reply = (
-                        "وصلتني رسالتك الصوتية، لكن تعذّر تحويلها إلى نص الآن. "
-                        "حاول مرة أخرى أو اكتب رسالتك."
-                    )
-            finally:
-                if temp_path and os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        logger.warning("Could not remove temporary Telegram audio file.")
-
-    else:
-        reply = await respond_to_telegram_text(chat_id, user_text)
-
-    await send_telegram_message(chat_id, reply)
 
 
 @app.post("/telegram/webhook")
