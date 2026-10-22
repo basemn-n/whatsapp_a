@@ -905,6 +905,26 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 #telegramCustomerLink a{color:var(--brand);overflow-wrap:anywhere}
 #telegramCustomerLink{font-size:14px}
 .sub-panel{background:#f8faff;border:1px solid #e6ecf8;border-radius:15px;padding:18px;margin:16px 0}
+
+.product-workspace{display:grid;grid-template-columns:245px minmax(0,1fr);gap:18px;align-items:start;margin-top:18px}
+.product-tree{background:#f8faff;border:1px solid #e1e8f5;border-radius:16px;padding:14px;position:sticky;top:14px}
+.tree-heading{font-size:16px;font-weight:800;padding:8px 10px 13px;border-bottom:1px solid #e4eaf5;margin-bottom:10px;color:var(--ink)}
+.tree-root{font-weight:750;color:#40516e;padding:10px 9px;background:#edf2ff;border-radius:9px;margin-bottom:6px}
+.product-tree-item{display:flex;align-items:center;gap:9px;width:100%;margin:3px 0;padding:11px 10px;text-align:right;background:transparent;color:#53627c;border:1px solid transparent;font-weight:650}
+.product-tree-item span{color:#8391aa;font-family:monospace}
+.product-tree-item:hover{background:#eef2ff;color:var(--brand);transform:none}
+.product-tree-item.active{background:#fff;color:var(--brand);border-color:#dce5ff;box-shadow:0 3px 12px #1b34750c}
+.tree-help{font-size:12px;line-height:1.8;color:var(--muted);padding:12px 8px 4px;margin-top:8px;border-top:1px solid #e4eaf5}
+.product-content{min-width:0;background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 5px 20px #1f355708}
+.product-subsection{min-width:0}
+.section-heading{display:flex;justify-content:space-between;align-items:start;gap:12px;margin-bottom:12px}
+.section-heading h3{margin:0 0 5px;font-size:19px}
+.section-heading p{margin:0;font-size:13px}
+.product-subsection>.toolbar:first-of-type{margin-top:10px}
+.product-subsection>.sub-panel{margin-top:10px}
+@media(max-width:800px){.product-workspace{grid-template-columns:1fr}.product-tree{position:static}.product-tree{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.tree-heading,.tree-root,.tree-help{grid-column:1/-1}.product-tree-item{margin:0}.product-content{padding:14px}}
+@media(max-width:460px){.product-tree{grid-template-columns:1fr}.product-tree-item{padding:10px}}
+
 #productForm{margin-top:10px}
 .login-overlay{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:#111b34a8;backdrop-filter:blur(7px)}
 .login-card{width:min(100%,440px);background:#fff;border:1px solid #e5eaf4;border-radius:24px;padding:28px;box-shadow:0 24px 80px #0b173d40}
@@ -1036,20 +1056,46 @@ onclick="showTab('requests')">طلبات التجار</button>
 <h3>إدارة المنتجات</h3>
 <p id="productsIntro">إدارة منتجات النشاط التجاري المحدد.</p>
 
-<div class="toolbar">
+
+<div class="product-workspace">
+  <aside class="product-tree" aria-label="أقسام المنتجات">
+    <div class="tree-heading">إدارة المنتجات</div>
+    <div class="tree-root">▸ كتالوج المتجر</div>
+    <button type="button" class="product-tree-item active" data-product-section="catalog" onclick="showProductSection('catalog')"><span>├</span> المنتجات المسجلة</button>
+    <button type="button" class="product-tree-item" data-product-section="editor" onclick="resetProductForm();showProductSection('editor')"><span>├</span> إضافة منتج جديد</button>
+    <button type="button" class="product-tree-item" data-product-section="import" onclick="showProductSection('import')"><span>├</span> استيراد الكتالوج</button>
+    <button type="button" class="product-tree-item" data-product-section="telegram" onclick="showProductSection('telegram')"><span>└</span> رابط العملاء</button>
+    <div class="tree-help">اختر قسمًا لعرض أدواته فقط. ستبقى بيانات المتجر وأقسامه منفصلة ومنظمة.</div>
+  </aside>
+  <div class="product-content">
+    <section id="productCatalogSection" class="product-subsection">
+      <div class="section-heading"><div><h3>المنتجات المسجلة</h3><p>البحث والمراجعة وتعديل بيانات المنتجات الموجودة.</p></div></div>
+      <div class="toolbar">
   <div class="search-box">
     <input id="productSearch" type="search" placeholder="ابحث باسم المنتج أو الموديل أو التصنيف" aria-label="البحث في المنتجات">
   </div>
   <button onclick="loadProducts()">تحديث المنتجات</button>
 </div>
-<div class="sub-panel">
-  <strong>رابط العملاء لفتح مساعد المتجر في Telegram</strong>
-  <p>انسخ هذا الرابط وضعه في وصف قناة المنتجات أو في منشور مثبت. يجب أن يضغط العميل عليه ثم يضغط Start في البوت.</p>
-  <p id="telegramCustomerLink">اختر النشاط التجاري لعرض الرابط.</p>
-  <button type="button" class="secondary" onclick="copyTelegramLink()">نسخ رابط العملاء</button>
+      <div class="wrap">
+<table>
+<thead>
+<tr>
+<th>المنتج</th>
+<th>التصنيف / الوصف</th>
+<th>المخزون</th>
+<th>السعر</th>
+<th>العملة</th>
+<th>التوفر</th>
+<th>إجراء</th>
+</tr>
+</thead>
+<tbody id="productRows"></tbody>
+</table>
 </div>
-
-<div class="sub-panel">
+    </section>
+    <section id="productEditorSection" class="product-subsection hidden">
+      <div class="section-heading"><div><h3>بيانات المنتج</h3><p>أدخل بيانات المنتج أو عدّل منتجًا موجودًا.</p></div></div>
+      <div class="sub-panel">
 <h3 id="formTitle">إضافة منتج جديد</h3>
 
 <form id="productForm">
@@ -1074,8 +1120,10 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 </div>
 </form>
 </div>
-
-<div class="sub-panel">
+    </section>
+    <section id="productImportSection" class="product-subsection hidden">
+      <div class="section-heading"><div><h3>استيراد الكتالوج</h3><p>إضافة مجموعة منتجات من جدول دفعة واحدة.</p></div></div>
+      <div class="sub-panel">
   <h3>استيراد كتالوج المنتجات دفعة واحدة</h3>
   <p>الصق بيانات CSV المنسوخة من Excel أو Google Sheets. الأعمدة المطلوبة: <code>name</code> و<code>price</code>. الأعمدة الاختيارية: <code>currency, model_number, category, stock_quantity, image_url, description, is_available</code>.</p>
   <p>لا تُستبدل المنتجات الموجودة تلقائيًا؛ سيتم تخطي الاسم أو رقم الموديل الموجود مسبقًا في المتجر نفسه. الحد الأقصى 1000 صف في العملية.</p>
@@ -1083,22 +1131,17 @@ onclick="resetProductForm()">إلغاء التعديل</button>
   <div class="form-actions"><button id="importProductsBtn" type="button" onclick="importProductsCsv()">استيراد المنتجات</button></div>
   <p id="productImportResult" role="status" aria-live="polite"></p>
 </div>
-
-<div class="wrap">
-<table>
-<thead>
-<tr>
-<th>المنتج</th>
-<th>التصنيف / الوصف</th>
-<th>المخزون</th>
-<th>السعر</th>
-<th>العملة</th>
-<th>التوفر</th>
-<th>إجراء</th>
-</tr>
-</thead>
-<tbody id="productRows"></tbody>
-</table>
+    </section>
+    <section id="productTelegramSection" class="product-subsection hidden">
+      <div class="section-heading"><div><h3>رابط العملاء</h3><p>رابط مباشر لفتح مساعد المتجر في Telegram.</p></div></div>
+      <div class="sub-panel">
+  <strong>رابط العملاء لفتح مساعد المتجر في Telegram</strong>
+  <p>انسخ هذا الرابط وضعه في وصف قناة المنتجات أو في منشور مثبت. يجب أن يضغط العميل عليه ثم يضغط Start في البوت.</p>
+  <p id="telegramCustomerLink">اختر النشاط التجاري لعرض الرابط.</p>
+  <button type="button" class="secondary" onclick="copyTelegramLink()">نسخ رابط العملاء</button>
+</div>
+    </section>
+  </div>
 </div>
 </section>
 
@@ -1388,6 +1431,24 @@ function logout() {
 async function ensureLogin() {
   if (auth) return true;
   return await login();
+}
+
+function showProductSection(section) {
+  const sections = {
+    catalog: "productCatalogSection",
+    editor: "productEditorSection",
+    import: "productImportSection",
+    telegram: "productTelegramSection"
+  };
+  Object.entries(sections).forEach(([key, id]) => {
+    const panel = document.getElementById(id);
+    if (panel) panel.classList.toggle("hidden", key !== section);
+  });
+  document.querySelectorAll("[data-product-section]").forEach(button => {
+    button.classList.toggle("active", button.dataset.productSection === section);
+  });
+  if (section === "catalog") loadProducts();
+  if (section === "telegram") updateTelegramCustomerLink();
 }
 
 function showTab(tab) {
@@ -2239,6 +2300,7 @@ function renderProducts() {
 }
 
 function editProduct(product) {
+  showProductSection("editor");
   document.getElementById("productId").value = product.id;
   document.getElementById("productName").value = product.name || "";
   document.getElementById("productDescription").value = product.description || "";
@@ -2262,6 +2324,7 @@ function editProduct(product) {
 }
 
 function resetProductForm() {
+  showProductSection("catalog");
   document.getElementById("productForm").reset();
   document.getElementById("productId").value = "";
   document.getElementById("productCurrency").value = "YER";
