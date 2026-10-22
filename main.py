@@ -1521,7 +1521,14 @@ async def process_telegram_update(update: dict):
 
     if user_text.startswith("/start"):
         parts = user_text.split(maxsplit=1)
+        # Telegram may deliver a plain /start when a customer opens the bot
+        # directly or has already started it. Use the explicitly configured
+        # product-store mapping only when no deep-link payload was supplied.
+        # A supplied payload always takes precedence to preserve multi-store routing.
         business_id = parts[1].strip() if len(parts) > 1 else ""
+        if not business_id:
+            business_id = TELEGRAM_PRODUCTS_BUSINESS_ID
+
         if business_id and await asyncio.to_thread(
             save_telegram_business, private_chat_id, business_id
         ):
@@ -1532,10 +1539,15 @@ async def process_telegram_update(update: dict):
                 "أو كتابة «أريد طلب» للبدء.",
             )
         else:
+            logger.error(
+                "Telegram /start could not bind customer: chat_id=%s payload_supplied=%s configured_business=%s",
+                private_chat_id,
+                len(parts) > 1,
+                bool(TELEGRAM_PRODUCTS_BUSINESS_ID),
+            )
             await send_telegram_message(
                 private_chat_id,
-                "أهلًا بك! 👋 لربطك بمتجر محدد، افتح رابط مساعد ذلك المتجر من منشوراته "
-                "واضغط Start. بعد الربط يمكنك السؤال عن المنتجات أو بدء طلبك.",
+                "تعذر ربط المحادثة بالمتجر حاليًا. يرجى إعادة فتح رابط المتجر والمحاولة مرة أخرى.",
             )
         return
 
