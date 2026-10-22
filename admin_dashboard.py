@@ -830,6 +830,21 @@ label{display:block;margin:10px 0 5px;font-size:14px;font-weight:650;color:#3442
 .status-off{color:var(--danger);font-weight:700}
 .hidden{display:none!important}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}
+.overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}
+.overview-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 5px 20px #1f355708;min-width:0}
+.overview-card h3{font-size:17px;margin-bottom:6px}
+.overview-number{font-size:30px;font-weight:800;color:var(--brand);line-height:1.3}
+.overview-sub{font-size:13px;color:var(--muted);margin-top:4px}
+.quick-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}
+.quick-actions button{flex:1;min-width:135px}
+.stock-list{display:grid;gap:8px;margin-top:12px}
+.stock-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:#f8faff;border:1px solid #e8edf7;border-radius:11px}
+.stock-item strong{overflow-wrap:anywhere}
+.stock-badge{white-space:nowrap;border-radius:999px;padding:3px 9px;font-size:12px;font-weight:750;background:#fff1f0;color:#b42318}
+.stock-badge.ok{background:#e8f7ef;color:#087443}
+.overview-table{min-width:620px}
+.empty-note{padding:18px;border:1px dashed #d7e0ef;border-radius:12px;color:var(--muted);text-align:center;background:#fafcff}
+@media(max-width:800px){.overview-grid{grid-template-columns:1fr}}
 .stat-card{background:linear-gradient(145deg,#fff,#f9fbff);border:1px solid var(--line);border-radius:16px;padding:19px;min-width:0}
 .stat-card span{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}
 .stat-card strong{display:block;font-size:clamp(24px,3vw,32px);color:var(--brand);line-height:1.2}
@@ -878,7 +893,8 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 </div>
 
 <div class="tabs">
-<button id="ordersTab" class="active"
+<button id="overviewTab" class="active" onclick="showTab('overview')">نظرة عامة</button>
+<button id="ordersTab"
 onclick="showTab('orders')">الطلبات</button>
 <button id="productsTab"
 onclick="showTab('products')">المنتجات</button>
@@ -891,7 +907,21 @@ onclick="showTab('requests')">طلبات التجار</button>
 
 <div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
 
-<section id="ordersPanel" class="panel">
+<section id="overviewPanel">
+  <div class="overview-grid">
+    <article class="overview-card"><h3>الطلبات</h3><div class="overview-number" id="overviewOrders">—</div><div class="overview-sub">إجمالي الطلبات في المتجر المحدد</div><div class="quick-actions"><button type="button" onclick="showTab('orders')">إدارة الطلبات</button></div></article>
+    <article class="overview-card"><h3>المنتجات</h3><div class="overview-number" id="overviewProducts">—</div><div class="overview-sub" id="overviewProductSummary">المنتجات المسجلة في متجرك</div><div class="quick-actions"><button type="button" onclick="showTab('products')">إدارة المنتجات</button></div></article>
+    <article class="overview-card"><h3>طلبات تحتاج متابعة</h3><div class="overview-number" id="overviewAttention">—</div><div class="overview-sub">قيد المراجعة أو التجهيز</div><div class="quick-actions"><button type="button" class="secondary" onclick="showTab('orders')">متابعة الطلبات</button></div></article>
+    <article class="overview-card"><h3>تنبيهات المخزون</h3><div class="overview-number" id="overviewLowStockCount">—</div><div class="overview-sub">منتجات نفد مخزونها أو اقترب من النفاد</div><div class="quick-actions"><button type="button" class="secondary" onclick="showTab('products')">مراجعة المخزون</button></div></article>
+  </div>
+  <div class="overview-grid">
+    <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>تظهر المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل بيانات المخزون.</div></div></section>
+    <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">سجّل الدخول لعرض الطلبات.</td></tr></tbody></table></div></section>
+  </div>
+  <div class="overview-card"><h3>إجراءات سريعة</h3><p>انتقل مباشرة إلى أكثر المهام استخدامًا.</p><div class="quick-actions"><button type="button" onclick="showTab('products')">＋ إضافة منتج</button><button type="button" class="secondary" onclick="showTab('reports')">عرض تقارير المبيعات</button><button type="button" class="secondary" onclick="loadOverview()">↻ تحديث النظرة العامة</button></div></div>
+</section>
+
+<section id="ordersPanel" class="panel hidden">
 <h3>إدارة طلبات العملاء</h3>
 
 <div class="stats">
@@ -1252,7 +1282,7 @@ document.getElementById("loginForm").addEventListener("submit", async event => {
     loginResolver = null;
     if (!businesses.length) await loadBusinesses();
     if (resolver) resolver(true);
-    else await loadOrders();
+    await loadOverview();
   } catch (error) {
     auth = "";
     sessionStorage.removeItem("store_admin_auth");
@@ -1287,6 +1317,8 @@ function showTab(tab) {
     tab = "orders";
   }
 
+  document.getElementById("overviewPanel")
+    .classList.toggle("hidden", tab !== "overview");
   document.getElementById("ordersPanel")
     .classList.toggle("hidden", tab !== "orders");
 
@@ -1300,6 +1332,8 @@ function showTab(tab) {
   document.getElementById("aiUsagePanel")
     .classList.toggle("hidden", tab !== "ai-usage");
 
+  document.getElementById("overviewTab")
+    .classList.toggle("active", tab === "overview");
   document.getElementById("ordersTab")
     .classList.toggle("active", tab === "orders");
 
@@ -1313,7 +1347,9 @@ function showTab(tab) {
   document.getElementById("aiUsageTab")
     .classList.toggle("active", tab === "ai-usage");
 
-  if (tab === "requests") {
+  if (tab === "overview") {
+    loadOverview();
+  } else if (tab === "requests") {
     loadSignupRequests();
   } else if (tab === "ai-usage") {
     loadAIUsage();
@@ -1323,6 +1359,65 @@ function showTab(tab) {
     loadReports();
   } else {
     loadOrders();
+  }
+}
+
+async function loadOverview() {
+  try {
+    if (!(await ensureLogin())) return;
+    if (!businesses.length) await loadBusinesses();
+    const businessId = document.getElementById("businessSelect").value;
+    if (!businessId) {
+      for (const id of ["overviewOrders", "overviewProducts", "overviewAttention", "overviewLowStockCount"]) document.getElementById(id).textContent = "0";
+      const stockList = document.getElementById("overviewStockList");
+      stockList.replaceChildren();
+      const note = document.createElement("div"); note.className = "empty-note"; note.textContent = "لا يوجد متجر محدد لعرض بياناته."; stockList.appendChild(note);
+      return;
+    }
+    setMessage("جارٍ تحديث ملخص المتجر والمخزون...");
+    const [orderData, productData] = await Promise.all([
+      api("/api/admin/orders?business_id=" + encodeURIComponent(businessId)),
+      api("/api/admin/products?business_id=" + encodeURIComponent(businessId))
+    ]);
+    allOrders = Array.isArray(orderData.orders) ? orderData.orders : [];
+    currentProducts = Array.isArray(productData.products) ? productData.products : [];
+    document.getElementById("overviewOrders").textContent = allOrders.length.toLocaleString("ar");
+    document.getElementById("overviewProducts").textContent = currentProducts.length.toLocaleString("ar");
+    document.getElementById("overviewProductSummary").textContent = currentProducts.filter(p => p.is_available && (p.stock_quantity == null || Number(p.stock_quantity) > 0)).length.toLocaleString("ar") + " منتج متاح للطلب";
+    document.getElementById("overviewAttention").textContent = allOrders.filter(o => ["pending", "approved", "processing"].includes(o.status)).length.toLocaleString("ar");
+    const lowStock = currentProducts.filter(p => !p.is_available || (p.stock_quantity != null && Number(p.stock_quantity) <= 3));
+    document.getElementById("overviewLowStockCount").textContent = lowStock.length.toLocaleString("ar");
+    const stockList = document.getElementById("overviewStockList");
+    stockList.replaceChildren();
+    if (!lowStock.length) {
+      const note = document.createElement("div"); note.className = "empty-note"; note.textContent = "ممتاز! لا توجد منتجات نفد مخزونها أو اقترب من النفاد."; stockList.appendChild(note);
+    } else {
+      for (const product of lowStock.slice(0, 8)) {
+        const item = document.createElement("div"); item.className = "stock-item";
+        const name = document.createElement("strong"); name.textContent = product.name || "منتج دون اسم";
+        const badge = document.createElement("span");
+        const available = Boolean(product.is_available) && (product.stock_quantity == null || Number(product.stock_quantity) > 0);
+        badge.className = "stock-badge" + (available ? " ok" : "");
+        badge.textContent = !product.is_available ? "غير متاح" : (product.stock_quantity == null ? "المخزون غير محدد" : (Number(product.stock_quantity) === 0 ? "نفد المخزون" : "متبقي " + Number(product.stock_quantity).toLocaleString("ar")));
+        item.append(name, badge); stockList.appendChild(item);
+      }
+    }
+    const recentRows = document.getElementById("overviewRecentOrders"); recentRows.replaceChildren();
+    const recent = [...allOrders].sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).slice(0, 6);
+    if (!recent.length) {
+      const tr = document.createElement("tr"); const td = cell("لا توجد طلبات مسجلة لهذا المتجر حتى الآن."); td.colSpan = 4; tr.appendChild(td); recentRows.appendChild(tr);
+    } else {
+      for (const order of recent) {
+        const tr = document.createElement("tr");
+        tr.append(cell(order.order_number ?? order.id), cell(order.product_name), cell(labels[order.status] || order.status), cell(order.quantity));
+        recentRows.appendChild(tr);
+      }
+    }
+    renderOrders();
+    renderProducts();
+    setMessage("تم تحديث النظرة العامة. تنبيهات المخزون تشمل المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.");
+  } catch (error) {
+    setMessage(error.message || "تعذر تحميل النظرة العامة.");
   }
 }
 
