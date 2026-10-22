@@ -32,8 +32,10 @@
 - انشر صور المنتجات وأوصافها، وثبّت منشورًا يحتوي رابط العملاء الذي نسخته من لوحة المدير.
 - يمكن وضع الرابط في وصف القناة أيضًا.
 - لا يحتاج البوت إلى قراءة رسائل القناة كي يجيب عن الأسعار: أضف المنتجات والأسعار في لوحة المدير، ثم انشرها في القناة.
-- النشر في القناة لا يستورد المنتجات تلقائيًا إلى قاعدة البيانات. يجب أن تضيف المنتج في لوحة المدير أيضًا.
-- اجعل الطلبات والبيانات الشخصية في المحادثة الخاصة مع البوت، لا في مجموعة عامة.
+- يمكن تفعيل الاستيراد التلقائي من قناة واحدة محددة عبر `TELEGRAM_PRODUCTS_CHAT_ID` في Render وربط معرّف القناة بمتجر باستخدام `channel_connections`. عند تفعيل ذلك، يعالج النظام منشورات القناة المحددة بصمت ولا يرد على منشوراتها.
+- للاستيراد التلقائي، اكتب اسم المنتج ورقم الموديل والسعر بوضوح في نص المنشور أو وصف الصورة. المنشور الذي لا يحتوي سعرًا واضحًا يُتخطّى بدل تخمين السعر. إذا تكرر رقم الموديل داخل المتجر نفسه، يُحدّث المنتج بدل إنشاء نسخة جديدة.
+- إذا لم تُضبط قناة الاستيراد وربط المتجر، أضف المنتجات من لوحة المدير كما هو موضح أعلاه.
+- اجعل الطلبات والبيانات الشخصية في المحادثة الخاصة مع البوت، لا في مجموعة عامة. يتجاهل البوت رسائل المجموعات العادية، ولا يرد على منشورات القنوات.
 
 ## كيف يستخدم العملاء البوت؟
 
@@ -63,6 +65,7 @@
 - **الطلبات**: مراجعة الطلبات والبحث والتصفية وتحديث الحالة.
 - **المنتجات**: إضافة المنتجات وتعديل السعر والوصف والتوفر.
 - **تقارير المبيعات**: إحصاءات الطلبات وقيمة الطلبات المسلّمة. التقرير يميّز بين الأسعار المحفوظة وقت الطلب والتقديرات للطلبات القديمة، ويعالج حتى 1000 طلب حديث في التقرير الحالي.
+- **تصدير CSV**: زر «تصدير الطلبات CSV» ينزّل حتى 1000 طلب حديث للمتجر المحدد، ويخضع لنفس صلاحيات المدير أو التاجر. لا يتضمن التصدير تقديرات للأسعار التاريخية؛ قيمة الإجمالي القديمة غير المحفوظة تظل فارغة.
 
 ## متغيرات البيئة المطلوبة في Render
 
@@ -74,8 +77,42 @@
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `VERIFY_TOKEN` و`WHATSAPP_TOKEN` و`PHONE_NUMBER_ID` عند إعداد WhatsApp
+- `META_APP_SECRET` للتحقق من توقيع Webhook الخاص بـ Meta
+- `FACEBOOK_VERIFY_TOKEN` و`FACEBOOK_PAGE_ACCESS_TOKEN` و`FACEBOOK_PAGE_ID` عند إعداد Facebook Messenger
+- `TELEGRAM_PRODUCTS_CHAT_ID` (معرّف القناة أو اسمها مع `@`) و`TELEGRAM_PRODUCTS_BUSINESS_ID` اختياريًا عند إعداد استيراد منتجات Telegram. الأفضل ربط القناة بمتجرها في `channel_connections` بدل الاعتماد على قيمة ثابتة.
 
 لا تشارك كلمات المرور أو الرموز السرية في المحادثات أو في مستودع GitHub.
+
+
+## استيراد منتجات Telegram تلقائيًا
+
+لتفعيل استيراد منشورات المنتجات، نفّذ ملف SQL `supabase/migrations/20261022_channel_connections.sql` وملف `supabase/migrations/20261022_telegram_durable_update_deduplication.sql` من Supabase SQL Editor. بعد ذلك، أضف ربط القناة بالمتجر الصحيح:
+
+```sql
+insert into public.channel_connections (channel, external_account_id, business_id)
+values ('telegram_products', 'TELEGRAM_CHANNEL_ID_OR_USERNAME', 'BUSINESS_UUID')
+on conflict (channel, external_account_id)
+do update set business_id = excluded.business_id;
+```
+
+ضع معرّف القناة أو اسمها في `TELEGRAM_PRODUCTS_CHAT_ID` داخل Render، ثم أعد النشر. لا تضف `TELEGRAM_PRODUCTS_BUSINESS_ID` إلا كبديل مقصود إذا لم تستخدم الربط في الجدول. منشورات القناة لا تؤدي إلى ردود من البوت؛ خدمة العملاء تظل في المحادثة الخاصة.
+
+## إعداد Facebook Messenger
+
+يتضمن التطبيق مساري التحقق والاستقبال `/facebook/webhook`، لكنه يحتاج إلى صفحة Facebook فعلية وتفعيل صلاحية Messenger في تطبيق Meta. في Render، اضبط `META_APP_SECRET` و`FACEBOOK_VERIFY_TOKEN` و`FACEBOOK_PAGE_ACCESS_TOKEN` و`FACEBOOK_PAGE_ID`. عنوان Webhook هو:
+
+`https://whatsapp-a-avp6.onrender.com/facebook/webhook`
+
+نفّذ `supabase/migrations/20261022_facebook_messenger_channel.sql` في Supabase، ثم اربط معرّف الصفحة بمتجرها:
+
+```sql
+insert into public.channel_connections (channel, external_account_id, business_id)
+values ('facebook_messenger', 'FACEBOOK_PAGE_ID', 'BUSINESS_UUID')
+on conflict (channel, external_account_id)
+do update set business_id = excluded.business_id;
+```
+
+هذه النسخة الأولية تدعم صفحة واحدة باستخدام رمز الوصول المضبوط في Render؛ لا تضف صفحة أخرى وتتوقع أن تعمل برمز الصفحة الأولى. يجب أن تكون صفحة Facebook مؤهلة، وأن يكتمل اشتراك التطبيق في حدث `messages`، وأن ينجح تحقق Meta من Webhook. لا تُشارك رمز الوصول في GitHub أو المحادثات.
 
 ## ربط WhatsApp بمتجر محدد
 
