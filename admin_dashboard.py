@@ -1130,7 +1130,7 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 <div><label for="productModelNumber">رقم الموديل / SKU</label><input id="productModelNumber" maxlength="120" placeholder="مثال: 4830"></div>
 <div><label for="productCategory">التصنيف</label><input id="productCategory" maxlength="120" placeholder="ملابس، إلكترونيات..."></div>
 <div><label for="productStock">الكمية في المخزون</label><input id="productStock" type="number" min="0" max="100000000" step="1" value="0" required></div>
-<div><label for="productImageUrl">رابط صورة المنتج</label><input id="productImageUrl" type="url" maxlength="2000" placeholder="https://..."></div>
+<div class="full"><label for="productImageFile">رفع صورة المنتج من جهازك</label><input id="productImageFile" type="file" accept="image/jpeg,image/png,image/webp"><small>ستُرفع الصورة إلى تخزين المتجر وتظهر بجانب اسم المنتج وسعره.</small><div id="productImagePreview"></div></div><div><label for="productImageUrl">أو رابط صورة المنتج</label><input id="productImageUrl" type="url" maxlength="2000" placeholder="https://..."></div>
 <div><label for="productAvailable">التوفر</label><select id="productAvailable"><option value="true">متاح للطلب</option><option value="false">غير متاح</option></select></div>
 <div class="full"><label for="productDescription">وصف المنتج</label><textarea id="productDescription" rows="3" maxlength="2000"></textarea></div>
 </div>
@@ -1154,12 +1154,12 @@ onclick="resetProductForm()">إلغاء التعديل</button>
     <input id="catalogFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp">
     <div class="form-actions"><button id="extractCatalogBtn" type="button" onclick="extractCatalogFile()">تحليل الملف ومعاينة المنتجات</button></div>
     <p id="catalogExtractResult" role="status" aria-live="polite"></p>
-    <p class="muted">للحفاظ على الدقة، ارفع PDF لا يتجاوز 20 ميجابايت وبحد أقصى 40 صفحة في العملية. الصور المضمنة في الملف تُستخدم للاستخراج، لكن لا تُحفظ كصور منتجات تلقائيًا؛ أضف رابط الصورة في عمود image_url عند توفره.</p>
+    <p class="muted">للحفاظ على الدقة، ارفع PDF لا يتجاوز 20 ميجابايت وبحد أقصى 40 صفحة في العملية. الصور المستخرجة من الكتالوج لا تُربط تلقائيًا بكل منتج؛ يمكنك رفع صورة مستقلة لكل منتج من نموذج المنتج.</p>
   </div>
   <p><strong>مراجعة البيانات قبل الحفظ</strong></p>
   <p>الأعمدة: <code>name,price,currency,model_number,category,stock_quantity,image_url,description,is_available</code>. صحّح الاسم والسعر والموديل والمخزون يدويًا إذا لزم.</p>
   <textarea id="productCsvText" rows="9" placeholder="name,price,currency,model_number,category,stock_quantity,image_url,description,is_available&#10;عباية صافي,1400,YER,4830,عبايات,5,,عباية سوداء,true"></textarea>
-  <div class="form-actions"><button id="importProductsBtn" type="button" onclick="importProductsCsv()">حفظ المنتجات بعد المراجعة</button></div>
+  <div class="form-actions"><button id="importProductsBtn" type="button" onclick="importProductsCsv()">حفظ المنتجات بعد المراجعة</button><button id="undoLastImportBtn" type="button" class="danger" onclick="undoLastImport()" disabled>تراجع عن آخر استيراد</button></div>
   <p id="productImportResult" role="status" aria-live="polite"></p>
 </div>
     </section>
@@ -2294,6 +2294,10 @@ async function importProductsCsv() {
       body: JSON.stringify({business_id: businessId, csv_text: csvText})
     });
     if (document.getElementById("businessSelect").value !== businessId) return;
+    if (Array.isArray(result.product_ids) && result.product_ids.length) {
+      sessionStorage.setItem(getUndoStorageKey(businessId), JSON.stringify({product_ids: result.product_ids, created_at: Date.now()}));
+    }
+    updateUndoButton();
     resultBox.textContent = "اكتمل الاستيراد. أضيف: " + result.created +
       "، تم تخطيه: " + result.skipped + "، أخطاء: " + result.errors.length +
       (result.errors.length ? " — " + result.errors.slice(0, 5).join(" | ") : "");
@@ -2305,6 +2309,7 @@ async function importProductsCsv() {
     resultBox.textContent = error.message || "تعذر استيراد المنتجات.";
   } finally {
     button.disabled = false;
+    updateUndoButton();
   }
 }
 
@@ -2344,7 +2349,7 @@ function renderProducts() {
       image.src = product.image_url;
       image.alt = product.name || "صورة المنتج";
       image.loading = "lazy";
-      image.style.cssText = "width:52px;height:52px;object-fit:cover;border-radius:8px;display:block;margin-bottom:6px";
+      image.style.cssText = "width:76px;height:76px;object-fit:cover;border-radius:8px;display:block;margin-bottom:6px";
       image.onerror = () => image.remove();
       productCell.appendChild(image);
     }
@@ -2378,13 +2383,70 @@ function renderProducts() {
     edit.onclick = () => editProduct(product);
 
     action.appendChild(edit);
+    const remove = document.createElement("button");
+    remove.textContent = "حذف";
+    remove.className = "danger";
+    remove.style.marginInlineStart = "6px";
+    remove.onclick = () => deleteProduct(product);
+    action.appendChild(remove);
     tr.appendChild(action);
     rows.appendChild(tr);
   }
 }
 
+function getUndoStorageKey(businessId) { return "catalogUndo:" + businessId; }
+
+function updateUndoButton() {
+  const businessId = document.getElementById("businessSelect").value;
+  const button = document.getElementById("undoLastImportBtn");
+  if (!button) return;
+  let record = null;
+  try { record = businessId ? JSON.parse(sessionStorage.getItem(getUndoStorageKey(businessId)) || "null") : null; } catch (_) {}
+  button.disabled = !(record && Array.isArray(record.product_ids) && record.product_ids.length);
+  button.title = button.disabled ? "لا يوجد استيراد حديث يمكن التراجع عنه في هذه الجلسة." : "حذف المنتجات التي أُضيفت في آخر عملية استيراد.";
+}
+
+async function undoLastImport() {
+  const businessId = document.getElementById("businessSelect").value;
+  const button = document.getElementById("undoLastImportBtn");
+  const resultBox = document.getElementById("productImportResult");
+  let record = null;
+  try { record = JSON.parse(sessionStorage.getItem(getUndoStorageKey(businessId)) || "null"); } catch (_) {}
+  if (!businessId || !record || !Array.isArray(record.product_ids) || !record.product_ids.length) {
+    updateUndoButton(); return;
+  }
+  if (!confirm("سيتم حذف المنتجات التي أُضيفت في آخر استيراد فقط. المنتجات التي ارتبطت بطلبات لن تُحذف حفاظًا على سجل الطلبات. هل تريد المتابعة؟")) return;
+  button.disabled = true;
+  try {
+    const result = await api("/api/admin/products/undo-import?business_id=" + encodeURIComponent(businessId), {
+      method: "POST", body: JSON.stringify({product_ids: record.product_ids})
+    });
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    sessionStorage.removeItem(getUndoStorageKey(businessId));
+    resultBox.textContent = "تم التراجع عن الاستيراد. حُذف: " + result.deleted + "، احتُفظ بمنتجات مرتبطة بطلبات: " + result.retained;
+    await loadProducts();
+  } catch (error) {
+    resultBox.textContent = error.message || "تعذر التراجع عن الاستيراد.";
+  } finally { updateUndoButton(); }
+}
+
+async function deleteProduct(product) {
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId || !product || !product.id) return;
+  if (!confirm("هل تريد حذف المنتج «" + product.name + "»؟ إذا كان مرتبطًا بطلب سابق، سيمنع النظام حذفه للحفاظ على سجل الطلبات.")) return;
+  try {
+    await api("/api/admin/products/" + encodeURIComponent(product.id) + "?business_id=" + encodeURIComponent(businessId), {method:"DELETE"});
+    setMessage("تم حذف المنتج.");
+    await loadProducts();
+  } catch (error) { setMessage(error.message || "تعذر حذف المنتج."); }
+}
+
 function editProduct(product) {
   showProductSection("editor");
+  document.getElementById("productImageFile").value = "";
+  const preview = document.getElementById("productImagePreview");
+  preview.replaceChildren();
+  if (product.image_url) { const img = document.createElement("img"); img.src = product.image_url; img.alt = "معاينة صورة المنتج"; img.style.cssText = "width:100px;height:100px;object-fit:cover;border-radius:8px"; preview.appendChild(img); }
   document.getElementById("productId").value = product.id;
   document.getElementById("productName").value = product.name || "";
   document.getElementById("productDescription").value = product.description || "";
@@ -2415,6 +2477,8 @@ function resetProductForm() {
   document.getElementById("productModelNumber").value = "";
   document.getElementById("productCategory").value = "";
   document.getElementById("productImageUrl").value = "";
+  document.getElementById("productImageFile").value = "";
+  document.getElementById("productImagePreview").replaceChildren();
   document.getElementById("productStock").value = "0";
   document.getElementById("productAvailable").value = "true";
   document.getElementById("formTitle").textContent =
@@ -2438,6 +2502,7 @@ document.getElementById("productForm")
       return;
     }
 
+    const imageFile = document.getElementById("productImageFile").files[0];
     const payload = {
       business_id: businessId,
       name: document.getElementById("productName").value.trim(),
@@ -2465,6 +2530,14 @@ document.getElementById("productForm")
     button.disabled = true;
 
     try {
+      if (imageFile) {
+        const form = new FormData();
+        form.append("business_id", businessId);
+        form.append("file", imageFile);
+        const uploaded = await api("/api/admin/products/upload-image", {method:"POST", body:form});
+        if (document.getElementById("businessSelect").value !== businessId) return;
+        payload.image_url = uploaded.image_url;
+      }
       if (productId) {
         delete payload.business_id;
 
@@ -2507,6 +2580,7 @@ document.getElementById("businessSelect")
     renderOrders();
     resetProductForm();
     updateTelegramCustomerLink();
+    updateUndoButton();
     loadProducts();
     loadOrders();
     loadReports();
@@ -2516,12 +2590,30 @@ document.getElementById("businessSelect")
 document.getElementById("filter")
   .addEventListener("change", renderOrders);
 
+document.getElementById("productImageFile").addEventListener("change", () => {
+  const preview = document.getElementById("productImagePreview");
+  preview.replaceChildren();
+  const file = document.getElementById("productImageFile").files[0];
+  if (!file) return;
+  if (!["image/jpeg","image/png","image/webp"].includes(file.type) || file.size > 8 * 1024 * 1024) {
+    setMessage("ارفع صورة JPG أو PNG أو WEBP بحجم لا يتجاوز 8 ميجابايت.");
+    document.getElementById("productImageFile").value = "";
+    return;
+  }
+  const img = document.createElement("img");
+  img.alt = "معاينة الصورة قبل الحفظ";
+  img.style.cssText = "width:100px;height:100px;object-fit:cover;border-radius:8px;margin-top:8px";
+  img.src = URL.createObjectURL(file);
+  preview.appendChild(img);
+});
+
 document.getElementById("productSearch")
   .addEventListener("input", renderProducts);
 
 document.getElementById("orderSearch")
   .addEventListener("input", renderOrders);
 
+updateUndoButton();
 if (auth) {
   document.getElementById("accountBtn").classList.add("hidden");
   document.getElementById("logoutBtn").classList.remove("hidden");
@@ -2829,6 +2921,46 @@ if (auth) {
                 detail="تعذرت إضافة المنتج. تحقق من أعمدة جدول products.",
             )
 
+    @router.post("/api/admin/products/upload-image")
+    def upload_product_image(
+        business_id: str = Form(...),
+        file: UploadFile = File(...),
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+        content_type = str(file.content_type or "").lower()
+        raw = file.file.read(8 * 1024 * 1024 + 1)
+        if not raw or len(raw) > 8 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="اختر صورة غير فارغة لا يتجاوز حجمها 8 ميجابايت.")
+        signatures = {
+            "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
+            "image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/webp": len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP",
+        }
+        if content_type not in signatures or not signatures[content_type]:
+            raise HTTPException(status_code=400, detail="الصيغ المدعومة هي JPG وPNG وWEBP فقط.")
+        try:
+            bucket = supabase.storage.from_("product-images")
+            object_path = f"{business_id}/{secrets.token_hex(16)}.{ {'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[content_type] }"
+            try:
+                supabase.storage.create_bucket("product-images", options={"public": True})
+            except Exception:
+                # Bucket may already exist. Upload below will surface any real permission/configuration error.
+                pass
+            bucket.upload(object_path, raw, {"content-type": content_type, "upsert": "true"})
+            public_url = bucket.get_public_url(object_path)
+            if isinstance(public_url, dict):
+                public_url = public_url.get("publicUrl") or public_url.get("publicURL") or ""
+            if not isinstance(public_url, str) or not public_url.startswith("http"):
+                raise RuntimeError("تعذر إنشاء رابط عام للصورة")
+            return {"success": True, "image_url": public_url}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر رفع صورة المنتج إلى Supabase Storage")
+            raise HTTPException(status_code=503, detail="تعذر رفع الصورة. تحقق من صلاحيات Supabase Storage وإنشاء bucket باسم product-images.")
+
     @router.post("/api/admin/products/extract-catalog")
     def extract_product_catalog(
         business_id: str = Form(...),
@@ -3091,14 +3223,87 @@ if (auth) {
                         seen_models.add(model.casefold())
                 except (ValueError, ArithmeticError) as exc:
                     errors.append(f"الصف {row_number}: {str(exc)[:180]}")
+            created_rows = []
             if new_products:
-                supabase.table("products").insert(new_products).execute()
-            return {"success": True, "created": len(new_products), "skipped": skipped, "errors": errors}
+                inserted = supabase.table("products").insert(new_products).select("id").execute()
+                created_rows = inserted.data or []
+            return {"success": True, "created": len(created_rows), "product_ids": [str(row["id"]) for row in created_rows if row.get("id")], "skipped": skipped, "errors": errors}
         except HTTPException:
             raise
         except Exception:
             logger.exception("تعذر استيراد كتالوج المنتجات")
             raise HTTPException(status_code=500, detail="تعذر استيراد الكتالوج. تحقق من تنسيق CSV وأعمدة جدول products.")
+
+    @router.delete("/api/admin/products/{product_id}")
+    def delete_product(
+        product_id: str,
+        business_id: str,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+        try:
+            existing = (
+                supabase.table("products").select("id")
+                .eq("id", product_id).eq("business_id", business_id).limit(1).execute()
+            )
+            if not existing.data:
+                raise HTTPException(status_code=404, detail="المنتج غير موجود في هذا المتجر.")
+            linked_orders = (
+                supabase.table("orders").select("id")
+                .eq("business_id", business_id).eq("product_id", product_id).limit(1).execute()
+            )
+            if linked_orders.data:
+                raise HTTPException(status_code=409, detail="لا يمكن حذف هذا المنتج لأنه مرتبط بطلب سابق. عطّله من التوفر بدلًا من ذلك للحفاظ على سجل الطلبات.")
+            deleted = (
+                supabase.table("products").delete()
+                .eq("id", product_id).eq("business_id", business_id).select("id").execute()
+            )
+            if not deleted.data:
+                raise HTTPException(status_code=404, detail="لم يُحذف المنتج؛ تأكد أنه تابع لهذا المتجر.")
+            return {"success": True, "deleted": 1}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر حذف المنتج")
+            raise HTTPException(status_code=500, detail="تعذر حذف المنتج. إذا كان مرتبطًا بطلب، عطّله بدل الحذف.")
+
+    @router.post("/api/admin/products/undo-import")
+    def undo_product_import(
+        payload: dict,
+        business_id: str,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+        product_ids = payload.get("product_ids") if isinstance(payload, dict) else None
+        if not isinstance(product_ids, list) or not product_ids or len(product_ids) > 1000:
+            raise HTTPException(status_code=400, detail="قائمة المنتجات المطلوب التراجع عنها غير صحيحة.")
+        ids = list(dict.fromkeys(str(value) for value in product_ids if value))
+        try:
+            # Never trust IDs supplied by the browser: first verify that every
+            # candidate belongs to the authenticated merchant's business.
+            owned = (
+                supabase.table("products").select("id")
+                .eq("business_id", business_id).in_("id", ids).limit(1000).execute()
+            )
+            owned_ids = [str(row["id"]) for row in (owned.data or []) if row.get("id")]
+            if len(owned_ids) != len(ids):
+                raise HTTPException(status_code=403, detail="بعض المنتجات لا تتبع هذا المتجر أو لم تعد موجودة؛ لم يتم تنفيذ التراجع.")
+            orders = (
+                supabase.table("orders").select("product_id")
+                .eq("business_id", business_id).in_("product_id", ids).limit(1000).execute()
+            )
+            linked = {str(row.get("product_id")) for row in (orders.data or []) if row.get("product_id")}
+            safe_ids = [value for value in ids if value not in linked]
+            if safe_ids:
+                supabase.table("products").delete().eq("business_id", business_id).in_("id", safe_ids).execute()
+            return {"success": True, "deleted": len(safe_ids), "retained": len(ids) - len(safe_ids)}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر التراجع عن استيراد المنتجات")
+            raise HTTPException(status_code=500, detail="تعذر التراجع عن الاستيراد. لم تُنفّذ العملية كاملة؛ راجع المنتجات قبل المحاولة مجددًا.")
 
     @router.patch("/api/admin/products/{product_id}")
     def update_product(
