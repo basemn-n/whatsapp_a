@@ -1003,6 +1003,16 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>تظهر المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل بيانات المخزون.</div></div></section>
     <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">سجّل الدخول لعرض الطلبات.</td></tr></tbody></table></div></section>
   </div>
+  <section class="overview-card" id="managerAssistantCard">
+    <h3>مدير المتجر الذكي</h3>
+    <p>تنبيهات وتوصيات مبنية على بيانات متجرك الفعلية. الأرقام لا تتضمن تكلفة البضاعة أو المصاريف ما لم تُسجّل في النظام.</p>
+    <div id="managerInsights" class="stock-list"><div class="empty-note">جارٍ تحميل التحليلات...</div></div>
+    <form id="managerQuestionForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+      <input id="managerQuestion" type="text" maxlength="1000" placeholder="مثال: كم بلغت مبيعات الطلبات المسلّمة هذا الأسبوع؟" style="flex:1;min-width:220px">
+      <button type="submit">اسأل مدير المتجر</button>
+    </form>
+    <div id="managerAnswer" class="empty-note" role="status" style="margin-top:12px;white-space:pre-wrap">اسأل عن المبيعات أو الطلبات أو المنتجات التي تحتاج متابعة.</div>
+  </section>
   <div class="overview-card"><h3>إجراءات سريعة</h3><p>انتقل مباشرة إلى أكثر المهام استخدامًا.</p><div class="quick-actions"><button type="button" onclick="showTab('products')">＋ إضافة منتج</button><button type="button" class="secondary" onclick="showTab('reports')">عرض تقارير المبيعات</button><button type="button" class="secondary" onclick="loadOverview()">↻ تحديث النظرة العامة</button></div></div>
 </section>
 
@@ -1541,6 +1551,45 @@ function showTab(tab) {
   }
 }
 
+async function askManagerAssistant(question) {
+  try {
+    if (!(await ensureLogin())) return;
+    const businessId = document.getElementById("businessSelect").value;
+    if (!businessId) { setMessage("اختر المتجر أولًا."); return; }
+    const answer = document.getElementById("managerAnswer");
+    answer.textContent = "جارٍ تحليل بيانات المتجر...";
+    const data = await api("/api/admin/manager-assistant", {
+      method: "POST",
+      body: JSON.stringify({business_id: businessId, question: question || ""})
+    });
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    answer.textContent = data.answer || "لا توجد إجابة متاحة.";
+    const list = document.getElementById("managerInsights");
+    list.replaceChildren();
+    const insights = Array.isArray(data.insights) ? data.insights : [];
+    if (!insights.length) {
+      const empty = document.createElement("div"); empty.className = "empty-note";
+      empty.textContent = "لا توجد تنبيهات حاليًا."; list.appendChild(empty);
+    } else {
+      for (const insight of insights) {
+        const item = document.createElement("div"); item.className = "stock-item";
+        const text = document.createElement("span"); text.textContent = insight.text || "";
+        const badge = document.createElement("span");
+        badge.className = "stock-badge" + (insight.kind === "warning" ? "" : " ok");
+        badge.textContent = insight.kind === "warning" ? "يحتاج انتباهًا" : (insight.kind === "good" ? "جيد" : "معلومة");
+        item.append(text, badge); list.appendChild(item);
+      }
+    }
+  } catch (error) {
+    document.getElementById("managerAnswer").textContent = error.message || "تعذر تحليل بيانات المتجر.";
+  }
+}
+
+document.getElementById("managerQuestionForm").addEventListener("submit", event => {
+  event.preventDefault();
+  askManagerAssistant(document.getElementById("managerQuestion").value.trim());
+});
+
 async function loadOverview() {
   try {
     if (!(await ensureLogin())) return;
@@ -1607,6 +1656,7 @@ async function loadOverview() {
     }
     renderOrders();
     renderProducts();
+    await askManagerAssistant("");
     setMessage("تم تحديث النظرة العامة. تنبيهات المخزون تشمل المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.");
   } catch (error) {
     setMessage(error.message || "تعذر تحميل النظرة العامة.");
@@ -3399,6 +3449,173 @@ if (auth) {
                 detail="تعذر تحميل الطلبات",
             )
 
+    @router.post("/api/admin/manager-assistant")
+    def merchant_manager_assistant(
+        payload: dict,
+        _admin=Depends(check_admin),
+    ):
+        """Explain store performance using only the selected store's saved data."""
+        business_id = str((payload or {}).get("business_id") or "").strip()
+        question = str((payload or {}).get("question") or "").strip()[:1000]
+        if not business_id:
+            raise HTTPException(status_code=400, detail="اختر المتجر أولًا.")
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+        try:
+            from datetime import datetime, timedelta, timezone
+
+            now = datetime.now(timezone.utc)
+            today = now.date()
+            week_start = today - timedelta(days=today.weekday())
+            week_start_dt = datetime.combine(week_start, datetime.min.time(), tzinfo=timezone.utc)
+            previous_week_start = week_start_dt - timedelta(days=7)
+            last_7_start = now - timedelta(days=7)
+            prior_7_start = now - timedelta(days=14)
+            month_start = now - timedelta(days=30)
+
+            order_result = (
+                supabase.table("orders").select("*")
+                .eq("business_id", business_id)
+                .order("created_at", desc=True).limit(1000).execute()
+            )
+            product_result = (
+                supabase.table("products")
+                .select("id, name, price, currency, is_available, stock_quantity")
+                .eq("business_id", business_id).limit(5000).execute()
+            )
+            orders = order_result.data or []
+            products = product_result.data or []
+
+            def parsed_date(row):
+                value = row.get("created_at")
+                if not value:
+                    return None
+                try:
+                    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    return parsed.astimezone(timezone.utc)
+                except (TypeError, ValueError):
+                    return None
+
+            def amount_for(order):
+                quantity = float(order.get("quantity") or 0)
+                if quantity <= 0:
+                    return None, None, False
+                if order.get("total_price") is not None:
+                    return float(order["total_price"]), order.get("currency") or "YER", True
+                product_name = str(order.get("product_name") or "").strip().casefold()
+                matches = [p for p in products if str(p.get("name") or "").strip().casefold() == product_name]
+                if len(matches) == 1 and matches[0].get("price") is not None:
+                    return float(matches[0]["price"]) * quantity, matches[0].get("currency") or "YER", False
+                return None, None, False
+
+            def grouped_revenue(rows):
+                totals, exact_totals = {}, {}
+                missing = 0
+                for order in rows:
+                    if order.get("status") != "delivered":
+                        continue
+                    amount, currency, exact = amount_for(order)
+                    if amount is None:
+                        missing += 1
+                        continue
+                    totals[currency] = round(totals.get(currency, 0) + amount, 2)
+                    if exact:
+                        exact_totals[currency] = round(exact_totals.get(currency, 0) + amount, 2)
+                return totals, exact_totals, missing
+
+            week_orders = [o for o in orders if (d := parsed_date(o)) and d >= week_start_dt]
+            previous_week_orders = [o for o in orders if (d := parsed_date(o)) and previous_week_start <= d < week_start_dt]
+            recent_7 = [o for o in orders if (d := parsed_date(o)) and d >= last_7_start]
+            prior_7 = [o for o in orders if (d := parsed_date(o)) and prior_7_start <= d < last_7_start]
+            last_30 = [o for o in orders if (d := parsed_date(o)) and d >= month_start]
+            week_revenue, week_exact, week_missing = grouped_revenue(week_orders)
+            prev_revenue, _, _ = grouped_revenue(previous_week_orders)
+
+            delivered_by_product = {}
+            for order in last_30:
+                if order.get("status") == "delivered":
+                    key = str(order.get("product_name") or "").strip().casefold()
+                    if key:
+                        delivered_by_product[key] = delivered_by_product.get(key, 0) + int(order.get("quantity") or 0)
+
+            low_stock = [
+                {"name": p.get("name") or "منتج دون اسم", "stock_quantity": p.get("stock_quantity"), "is_available": p.get("is_available")}
+                for p in products
+                if not p.get("is_available") or (p.get("stock_quantity") is not None and int(p.get("stock_quantity") or 0) <= 3)
+            ]
+            slow_products = [
+                p.get("name") or "منتج دون اسم" for p in products
+                if str(p.get("name") or "").strip().casefold() not in delivered_by_product
+                and p.get("is_available")
+            ][:10]
+            pending_count = sum(1 for o in orders if o.get("status") in ("pending", "approved"))
+            processing_count = sum(1 for o in orders if o.get("status") == "processing")
+            recent_count, prior_count = len(recent_7), len(prior_7)
+            if prior_count:
+                demand_change = round((recent_count - prior_count) * 100 / prior_count)
+            else:
+                demand_change = 100 if recent_count else 0
+
+            def money_text(groups):
+                if not groups:
+                    return "لا توجد إيرادات مسجلة"
+                return "، ".join(f"{amount:,.2f} {currency}" for currency, amount in sorted(groups.items()))
+
+            insights = []
+            if low_stock:
+                insights.append({"kind": "warning", "text": f"هناك {len(low_stock)} منتج يحتاج مراجعة المخزون؛ يشمل ذلك المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل."})
+            else:
+                insights.append({"kind": "good", "text": "لا توجد منتجات نفد مخزونها أو اقترب من النفاد وفق حد التنبيه الحالي (3 قطع)."})
+            if pending_count:
+                insights.append({"kind": "warning", "text": f"لديك {pending_count} طلبًا قيد المراجعة أو بانتظار الموافقة."})
+            if processing_count:
+                insights.append({"kind": "info", "text": f"هناك {processing_count} طلبات قيد التجهيز تحتاج متابعة."})
+            if recent_count > prior_count:
+                insights.append({"kind": "good", "text": f"زاد عدد الطلبات خلال آخر 7 أيام إلى {recent_count} مقارنةً بـ {prior_count} في الأيام السبعة السابقة ({demand_change:+d}%)."})
+            elif recent_count < prior_count:
+                insights.append({"kind": "info", "text": f"انخفض عدد الطلبات خلال آخر 7 أيام إلى {recent_count} مقارنةً بـ {prior_count} في الأيام السبعة السابقة ({demand_change:+d}%)."})
+            else:
+                insights.append({"kind": "info", "text": f"عدد الطلبات في آخر 7 أيام: {recent_count}، ومثلها في الأيام السبعة السابقة: {prior_count}."})
+            if slow_products:
+                names = "، ".join(slow_products[:5])
+                insights.append({"kind": "info", "text": f"هذه المنتجات لم يظهر لها طلب مُسلّم خلال آخر 30 يومًا ضمن البيانات المحمّلة: {names}."})
+
+            lowered = question.casefold()
+            asks_week = any(term in lowered for term in ("هذا الأسبوع", "الاسبوع", "الأسبوع", "week", "ربحت", "الربح", "الإيراد", "المبيعات"))
+            if asks_week:
+                answer = f"من بداية هذا الأسبوع ({week_start.isoformat()}) حتى الآن، قيمة الطلبات المسلّمة المحسوبة هي {money_text(week_revenue)}. من هذا المبلغ، القيمة المحفوظة وقت إنشاء الطلبات هي {money_text(week_exact)}."
+                if week_missing:
+                    answer += f" تعذّر حساب قيمة {week_missing} طلب/طلبات مسلّمة لعدم توفر سعر موثوق."
+                answer += " هذا إيراد/مبيعات وليس ربحًا صافيًا. لا أستطيع حساب الربح الحقيقي دون تكلفة شراء المنتجات والمصاريف مثل التوصيل والتغليف والعمولات. الأرقام تعتمد على آخر 1000 طلب محمّل."
+            elif question:
+                answer = "أستطيع تلخيص أداء المتجر من الطلبات والمنتجات المسجلة. اسأل مثلًا: كم بلغت مبيعات الطلبات المسلّمة هذا الأسبوع؟ ولحساب الربح الحقيقي يلزم تسجيل تكلفة المنتج والمصاريف."
+            else:
+                answer = "هذا ملخص تنبيهات مبني على بيانات المتجر المحدد فقط. الإيرادات لا تعني الربح الصافي؛ يلزم إدخال تكلفة البضاعة والمصاريف لحساب الربح الحقيقي."
+
+            return {
+                "business_id": business_id,
+                "answer": answer,
+                "insights": insights,
+                "week_start": week_start.isoformat(),
+                "week_delivered_revenue": week_revenue,
+                "week_exact_revenue": week_exact,
+                "week_missing_price_orders": week_missing,
+                "recent_7_day_orders": recent_count,
+                "previous_7_day_orders": prior_count,
+                "low_stock_count": len(low_stock),
+                "pending_orders": pending_count,
+                "processing_orders": processing_count,
+                "slow_products": slow_products,
+                "data_limit": 1000,
+            }
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر إنشاء ملخص مدير المتجر الذكي.")
+            raise HTTPException(status_code=500, detail="تعذر تحليل بيانات المتجر الآن. حاول تحديث الصفحة.")
+ 
     @router.get("/api/admin/reports/sales")
     def sales_report(
         business_id: str,
