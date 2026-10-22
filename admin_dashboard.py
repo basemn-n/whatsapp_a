@@ -935,6 +935,25 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 .login-error{color:var(--danger);font-size:14px;margin-top:12px;min-height:20px}
 .login-foot{font-size:12px;color:#7b879b;text-align:center;margin-top:15px}
 @media(max-width:800px){body{padding:12px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.page-head{padding:18px;align-items:flex-start}.head-actions{flex-direction:column}}
+
+.dashboard-layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:18px;align-items:start;margin-top:18px}
+.dashboard-tree{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px;position:sticky;top:14px;box-shadow:0 6px 24px #1f355708;min-width:0}
+.dashboard-tree-title{font-size:17px;font-weight:800;padding:8px 10px 14px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.dashboard-tree-group{font-size:12px;font-weight:800;color:#71809a;padding:10px 9px 5px}
+.dashboard-tree-item{display:flex;align-items:center;gap:10px;width:100%;text-align:right;background:transparent;color:#52617b;border:1px solid transparent;padding:11px 10px;margin:3px 0;border-radius:10px;font-weight:650;box-shadow:none}
+.dashboard-tree-item span{width:19px;flex:0 0 19px;text-align:center;color:#8290a8;font-family:monospace}
+.dashboard-tree-item:hover{background:#f2f5ff;color:var(--brand);transform:none}
+.dashboard-tree-item.active{background:#edf1ff;border-color:#dce5ff;color:var(--brand);box-shadow:none}
+.dashboard-tree-branch{border-right:1px solid #dce4f2;margin:2px 13px 8px 0;padding-right:9px}
+.dashboard-tree-note{font-size:12px;line-height:1.8;color:var(--muted);border-top:1px solid var(--line);margin-top:14px;padding:12px 8px 3px}
+.dashboard-main{min-width:0}
+.dashboard-main>#msg{margin-bottom:12px}
+.dashboard-main>.panel,.dashboard-main>section:not(#msg){min-width:0}
+.dashboard-main .wrap{max-width:100%}
+.dashboard-main table{width:100%}
+@media(max-width:900px){.dashboard-layout{grid-template-columns:210px minmax(0,1fr);gap:12px}.dashboard-tree{padding:10px}}
+@media(max-width:700px){.dashboard-layout{grid-template-columns:1fr}.dashboard-tree{position:static;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.dashboard-tree-title,.dashboard-tree-group,.dashboard-tree-note{grid-column:1/-1}.dashboard-tree-item{margin:0;padding:10px 8px;font-size:13px}.dashboard-tree-branch{display:contents}.dashboard-main{min-width:0}}
+
 @media(max-width:560px){body{padding:8px}.page-head{border-radius:16px;flex-direction:column}.brand-icon{width:45px;height:45px}.tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.tabs button{padding:10px 5px;font-size:13px}.grid{grid-template-columns:1fr}.full{grid-column:auto}.panel{padding:14px;border-radius:14px}.stats{gap:8px}.stat-card{padding:13px}.toolbar select{width:100%}.search-box{min-width:100%}.login-card{padding:22px}}
 </style>
 </head>
@@ -954,21 +973,24 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 <button id="createMerchantAccountBtn" class="secondary hidden" onclick="createMerchantAccount()">إنشاء حساب تاجر</button>
 </div>
 
-<div class="tabs">
-<button id="overviewTab" class="active" onclick="showTab('overview')">نظرة عامة</button>
-<button id="ordersTab"
-onclick="showTab('orders')">الطلبات</button>
-<button id="productsTab"
-onclick="showTab('products')">المنتجات</button>
-<button id="reportsTab"
-onclick="showTab('reports')">تقارير المبيعات</button>
-<button id="settingsTab" onclick="showTab('settings')">إعدادات المتجر</button>
-<button id="requestsTab" class="hidden"
-onclick="showTab('requests')">طلبات التجار</button>
-<button id="aiUsageTab" class="hidden" onclick="showTab('ai-usage')">استخدام الذكاء الاصطناعي</button>
-</div>
-
-<div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
+<div class="dashboard-layout">
+  <aside class="dashboard-tree" aria-label="القائمة الرئيسية">
+    <div class="dashboard-tree-title">مساحة العمل</div>
+    <div class="dashboard-tree-group">▾ إدارة المتجر</div>
+    <button id="overviewTab" class="dashboard-tree-item active" onclick="showTab('overview')"><span>⌂</span> نظرة عامة</button>
+    <div class="dashboard-tree-branch">
+      <button id="ordersTab" class="dashboard-tree-item" onclick="showTab('orders')"><span>├</span> الطلبات</button>
+      <button id="productsTab" class="dashboard-tree-item" onclick="showTab('products')"><span>├</span> المنتجات</button>
+      <button id="reportsTab" class="dashboard-tree-item" onclick="showTab('reports')"><span>└</span> تقارير المبيعات</button>
+    </div>
+    <div class="dashboard-tree-group">▾ إعدادات وخدمات</div>
+    <button id="settingsTab" class="dashboard-tree-item" onclick="showTab('settings')"><span>⚙</span> إعدادات المتجر والمساعد</button>
+    <button id="requestsTab" class="dashboard-tree-item hidden" onclick="showTab('requests')"><span>├</span> طلبات التجار</button>
+    <button id="aiUsageTab" class="dashboard-tree-item hidden" onclick="showTab('ai-usage')"><span>└</span> استخدام الذكاء الاصطناعي</button>
+    <div class="dashboard-tree-note">اختر قسمًا من القائمة لعرض بياناته وأدواته فقط.</div>
+  </aside>
+  <div class="dashboard-main">
+    <div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
 
 <section id="overviewPanel">
   <div class="overview-grid">
@@ -1229,6 +1251,8 @@ onclick="resetProductForm()">إلغاء التعديل</button>
     <tbody id="signupRequestRows"></tbody>
   </table></div>
 </section>
+  </div>
+</div>
 </main>
 
 <div id="loginOverlay" class="login-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
