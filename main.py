@@ -139,14 +139,16 @@ def get_business_context(business_id: str):
             lines.append("لا توجد منتجات مسجلة.")
         else:
             for product in products:
+                stock_quantity = product.get("stock_quantity")
+                # Availability must respect both the merchant toggle and real stock.
+                in_stock = stock_quantity is None or int(stock_quantity) > 0
                 availability = (
                     "متاح للطلب"
-                    if product.get("is_available")
+                    if product.get("is_available") and in_stock
                     else "غير متاح للطلب"
                 )
                 model_number = str(product.get("model_number") or "").strip()
                 category = str(product.get("category") or "").strip()
-                stock_quantity = product.get("stock_quantity")
                 stock_text = (
                     f"الكمية في المخزون: {stock_quantity}"
                     if stock_quantity is not None
@@ -251,12 +253,25 @@ def get_available_products(business_id: str):
     try:
         result = (
             supabase.table("products")
-            .select("id, name, description, price, currency, is_available, model_number")
+            .select("id, name, description, price, currency, is_available, model_number, stock_quantity")
             .eq("business_id", business_id)
             .eq("is_available", True)
             .execute()
         )
-        return result.data or []
+        # Filter depleted products in Python because PostgREST null/zero stock
+        # semantics should not accidentally make them orderable.
+        products = result.data or []
+        available = []
+        for product in products:
+            stock = product.get("stock_quantity")
+            if stock is not None:
+                try:
+                    if int(stock) <= 0:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            available.append(product)
+        return available
 
     except Exception:
         logger.exception("تعذر قراءة المنتجات المتاحة.")
