@@ -792,17 +792,17 @@ const searchInput=document.getElementById("storeSearch");
 const cards=[...document.querySelectorAll("#storeProductGrid .product")];
 const count=document.getElementById("productCount");
 const noMatch=document.getElementById("noMatch");
-searchInput.addEventListener("input",()=>{
+searchInput.addEventListener("input",()=>{{
   const query=searchInput.value.trim().toLocaleLowerCase();
   let visible=0;
-  for(const card of cards){
+  for(const card of cards){{
     const match=(card.dataset.search||"").toLocaleLowerCase().includes(query);
     card.hidden=!match;
     if(match) visible++;
-  }
+  }}
   noMatch.style.display=visible===0?"block":"none";
   count.textContent=visible.toLocaleString("ar")+" منتج";
-});
+}});
 </script>
 </body></html>"""
         return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
