@@ -9,6 +9,7 @@ import requests
 import tempfile
 import uuid
 import threading
+from urllib.parse import urlparse
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
@@ -28,6 +29,9 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "").strip()
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
+FACEBOOK_VERIFY_TOKEN = os.getenv("FACEBOOK_VERIFY_TOKEN", "").strip()
+FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
+FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
 # Empty by default: never silently import a catalog into a hard-coded business.
@@ -1590,6 +1594,191 @@ async def receive_telegram_webhook(request: Request):
 
     finish_telegram_update(update_id)
     return {"ok": True}
+
+
+# -----------------------------
+# Facebook Messenger webhook
+# -----------------------------
+
+def download_facebook_image(url: str):
+    """Download a Facebook-hosted image only; reject arbitrary external URLs."""
+    try:
+        parsed = urlparse(str(url or ""))
+        host = (parsed.hostname or "").lower()
+        allowed_host = (
+            host.endswith(".fbcdn.net")
+            or host == "fbcdn.net"
+            or host.endswith(".fbsbx.com")
+            or host == "fbsbx.com"
+            or host.endswith(".facebook.com")
+            or host == "facebook.com"
+        )
+        if parsed.scheme != "https" or not allowed_host:
+            logger.warning("Rejected Facebook attachment URL with an untrusted host.")
+            return None
+
+        data = bytearray()
+        with requests.get(url, timeout=20, stream=True, allow_redirects=False) as response:
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                data.extend(chunk)
+                if len(data) > 10 * 1024 * 1024:
+                    logger.warning("Facebook image exceeded the 10 MB processing limit.")
+                    return None
+        content = bytes(data)
+        if not (
+            content.startswith(b"\xff\xd8\xff")
+            or content.startswith(b"\x89PNG\r\n\x1a\n")
+            or (len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP")
+        ):
+            logger.warning("Facebook attachment was not a supported image.")
+            return None
+        return content
+    except requests.RequestException:
+        logger.exception("Failed to download Facebook Messenger image.")
+        return None
+
+
+def send_facebook_message(recipient_id: str, text: str):
+    """Send a reply through the single Facebook Page configured in Render."""
+    if not FACEBOOK_PAGE_ACCESS_TOKEN or not FACEBOOK_PAGE_ID:
+        logger.error("Facebook Messenger credentials are not configured.")
+        return False
+
+    endpoint = "https://graph.facebook.com/v26.0/me/messages"
+    parts = [str(text or "عذرًا، لا يوجد رد حاليًا.")[i:i + 1900]
+             for i in range(0, len(str(text or "عذرًا، لا يوجد رد حاليًا.")), 1900)]
+    try:
+        for part in parts:
+            response = requests.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {FACEBOOK_PAGE_ACCESS_TOKEN}"},
+                json={
+                    "recipient": {"id": str(recipient_id)},
+                    "messaging_type": "RESPONSE",
+                    "message": {"text": part},
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+        return True
+    except requests.RequestException:
+        # Avoid logging request headers or access tokens.
+        logger.exception("Failed to send Facebook Messenger reply.")
+        return False
+
+
+@app.get("/facebook/webhook")
+async def verify_facebook_webhook(request: Request):
+    params = request.query_params
+    if (
+        FACEBOOK_VERIFY_TOKEN
+        and params.get("hub.mode") == "subscribe"
+        and hmac.compare_digest(
+            params.get("hub.verify_token", ""),
+            FACEBOOK_VERIFY_TOKEN,
+        )
+    ):
+        return Response(
+            content=params.get("hub.challenge", ""),
+            media_type="text/plain",
+        )
+    raise HTTPException(status_code=403, detail="Facebook webhook verification failed.")
+
+
+@app.post("/facebook/webhook")
+async def receive_facebook_webhook(request: Request):
+    if not META_APP_SECRET:
+        raise HTTPException(status_code=503, detail="Meta signature verification is not configured.")
+
+    raw_body = await request.body()
+    supplied_signature = request.headers.get("X-Hub-Signature-256", "").strip()
+    expected_signature = "sha256=" + hmac.new(
+        META_APP_SECRET.encode("utf-8"), raw_body, hashlib.sha256
+    ).hexdigest()
+    if not supplied_signature or not hmac.compare_digest(supplied_signature, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid Facebook webhook signature.")
+
+    try:
+        body = json.loads(raw_body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body.")
+
+    if body.get("object") != "page":
+        return {"status": "ignored"}
+
+    # This initial Messenger connector intentionally supports one Page token
+    # configured in Render. Other Pages are ignored rather than cross-routing tenants.
+    configured_page_id = str(FACEBOOK_PAGE_ID or "").strip()
+    if not configured_page_id or not FACEBOOK_PAGE_ACCESS_TOKEN:
+        logger.warning("Facebook Messenger event ignored: Page credentials are not configured.")
+        return {"status": "not_configured"}
+
+    for entry in body.get("entry", []):
+        page_id = str(entry.get("id") or "").strip()
+        if page_id != configured_page_id:
+            logger.warning("Ignoring Facebook event for an unconfigured Page ID.")
+            continue
+
+        business_id = await asyncio.to_thread(
+            get_channel_business_id, "facebook_messenger", page_id
+        )
+        if not business_id:
+            logger.warning("Facebook Page is not mapped to a merchant store.")
+            continue
+
+        context = await asyncio.to_thread(get_business_context, business_id)
+        for event in entry.get("messaging", []):
+            sender_id = str((event.get("sender") or {}).get("id") or "").strip()
+            message = event.get("message") or {}
+            if not sender_id or not message or message.get("is_echo"):
+                continue
+            # Delivery/read receipts and postbacks are not customer messages.
+            if event.get("delivery") or event.get("read") or event.get("postback"):
+                continue
+
+            user_text = str(message.get("text") or "").strip()
+            image_bytes = None
+            attachments = message.get("attachments") or []
+            for attachment in attachments:
+                if (attachment.get("type") or "").lower() == "image":
+                    payload = attachment.get("payload") or {}
+                    image_bytes = await asyncio.to_thread(
+                        download_facebook_image, payload.get("url", "")
+                    )
+                    if not image_bytes:
+                        await asyncio.to_thread(
+                            send_facebook_message,
+                            sender_id,
+                            "وصلتني الصورة، لكن تعذّر تحميلها. أرسل صورة أخرى أو اكتب سؤالك.",
+                        )
+                        break
+                    if not user_text:
+                        user_text = "حلّل صورة العميل وساعده اعتمادًا على كتالوج المتجر وأسعاره الفعلية."
+                    break
+
+            if attachments and any((a.get("type") or "").lower() == "image" for a in attachments) and not image_bytes:
+                continue
+            if not user_text and not image_bytes:
+                continue
+
+            try:
+                reply = await asyncio.to_thread(
+                    generate_ai_response,
+                    f"facebook_{sender_id}",
+                    user_text,
+                    image_bytes,
+                    context,
+                    f"facebook_{page_id}_{sender_id}_{business_id}",
+                    business_id,
+                )
+                await asyncio.to_thread(send_facebook_message, sender_id, reply)
+            except Exception:
+                logger.exception("Failed to process Facebook Messenger customer message.")
+
+    return {"status": "ok"}
 
 
 # -----------------------------
