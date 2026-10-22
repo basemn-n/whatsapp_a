@@ -1,4 +1,4 @@
-""""Import product posts from a configured Telegram channel into Supabase."""
+"""Import product posts from a configured Telegram channel into Supabase."""
 
 import logging
 import re
@@ -11,18 +11,18 @@ _DIGIT_TRANSLATION = str.maketrans(
 )
 
 _MODEL_RE = re.compile(
-    r"(?:رقم\\s*الموديل|الموديل|موديل|model(?:\\s*(?:number|no\\.?))?|sku)"
-    r"\\s*[:：#\\-]?\\s*([A-Za-z0-9٠-٩۰-۹][A-Za-z0-9٠-٩۰-۹/_-]*)",
+    r"(?:رقم\s*الموديل|الموديل|موديل|model(?:\s*(?:number|no\.?))?|sku)"
+    r"\s*[:：#\-]?\s*([A-Za-z0-9٠-٩۰-۹][A-Za-z0-9٠-٩۰-۹/_-]*)",
     re.IGNORECASE,
 )
 _PRICE_LABEL_RE = re.compile(
-    r"(?:السعر|price|بمبلغ)\\s*[:：\\-]?\\s*"
+    r"(?:السعر|price|بمبلغ)\s*[:：\-]?\s*"
     r"([0-9٠-٩۰-۹][0-9٠-٩۰-۹,٬٫.]*)",
     re.IGNORECASE,
 )
 _CURRENCY_PRICE_RE = re.compile(
-    r"([0-9٠-٩۰-۹][0-9٠-٩۰-۹,٬٫.]*)\\s*"
-    r"(ريال(?:\\s*(?:سعودي|يمني))?|ر\\.?\\s*س|SAR|YER|USD|دولار)",
+    r"([0-9٠-٩۰-۹][0-9٠-٩۰-۹,٬٫.]*)\s*"
+    r"(ريال(?:\s*(?:سعودي|يمني))?|ر\.?\s*س|SAR|YER|USD|دولار)",
     re.IGNORECASE,
 )
 
@@ -47,11 +47,11 @@ def _parse_amount(value: str):
 
 def _currency_from_text(text: str, default_currency: str) -> str:
     lowered = text.casefold()
-    if re.search(r"\\bSAR\\b|ر\\.?\\s*س|ريال\\s*سعودي", lowered, re.IGNORECASE):
+    if re.search(r"\bSAR\b|ر\.?\s*س|ريال\s*سعودي", lowered, re.IGNORECASE):
         return "SAR"
-    if re.search(r"\\bUSD\\b|دولار", lowered, re.IGNORECASE):
+    if re.search(r"\bUSD\b|دولار", lowered, re.IGNORECASE):
         return "USD"
-    if re.search(r"\\bYER\\b|ريال\\s*يمني", lowered, re.IGNORECASE):
+    if re.search(r"\bYER\b|ريال\s*يمني", lowered, re.IGNORECASE):
         return "YER"
     return (default_currency or "YER").upper()
 
@@ -78,7 +78,7 @@ def _extract_fields(post: dict, default_currency: str):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     title = ""
     for line in lines:
-        if re.match(r"^(?:السعر|price|رقم\\s*الموديل|الموديل|موديل|sku)\\s*[:：\\-]?", line, re.IGNORECASE):
+        if re.match(r"^(?:السعر|price|رقم\s*الموديل|الموديل|موديل|sku)\s*[:：\-]?", line, re.IGNORECASE):
             continue
         title = line
         break
@@ -87,19 +87,19 @@ def _extract_fields(post: dict, default_currency: str):
         title = lines[0] if lines else ""
 
     title = re.sub(
-        r"(?:السعر|price|بمبلغ)\\s*[:：\\-]?\\s*"
+        r"(?:السعر|price|بمبلغ)\s*[:：\-]?\s*"
         r"[0-9٠-٩۰-۹][0-9٠-٩۰-۹,٬٫.]*.*$",
         "",
         title,
         flags=re.IGNORECASE,
-    ).strip(" \\t-–—:؛,")
+    ).strip(" \t-–—:؛,")
     title = re.sub(
-        r"\\s*[0-9٠-٩۰-۹][0-9٠-٩۰-۹,٬٫.]*\\s*"
-        r"(?:ريال(?:\\s*(?:سعودي|يمني))?|ر\\.?\\s*س|SAR|YER|USD|دولار)\\s*$",
+        r"\s*[0-9٠-٩۰-۹][0-9٠-٩۰-۹,٬٫.]*\s*"
+        r"(?:ريال(?:\s*(?:سعودي|يمني))?|ر\.?\s*س|SAR|YER|USD|دولار)\s*$",
         "",
         title,
         flags=re.IGNORECASE,
-    ).strip(" \\t-–—:؛,")
+    ).strip(" \t-–—:؛,")
     if not title:
         return {"error": "no_name", "text": text[:2000]}
 
@@ -114,7 +114,7 @@ def _extract_fields(post: dict, default_currency: str):
 
     return {
         "name": title[:200],
-        "description": "\\n".join(description_lines)[:2000],
+        "description": "\n".join(description_lines)[:2000],
         "price": price,
         "currency": currency,
         "model_number": model or None,
