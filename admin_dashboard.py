@@ -181,6 +181,10 @@ class ProductCreate(BaseModel):
     image_url: str = Field(default="", max_length=2000)
     stock_quantity: int = Field(default=0, ge=0, le=100000000)
 
+class ProductCsvImport(BaseModel):
+    business_id: str
+    csv_text: str = Field(min_length=1, max_length=2_000_000)
+
 
 class ProductUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -1069,6 +1073,15 @@ onclick="showTab('requests')">طلبات التجار</button>
 onclick="resetProductForm()">إلغاء التعديل</button>
 </div>
 </form>
+</div>
+
+<div class="sub-panel">
+  <h3>استيراد كتالوج المنتجات دفعة واحدة</h3>
+  <p>الصق بيانات CSV المنسوخة من Excel أو Google Sheets. الأعمدة المطلوبة: <code>name</code> و<code>price</code>. الأعمدة الاختيارية: <code>currency, model_number, category, stock_quantity, image_url, description, is_available</code>.</p>
+  <p>لا تُستبدل المنتجات الموجودة تلقائيًا؛ سيتم تخطي الاسم أو رقم الموديل الموجود مسبقًا في المتجر نفسه. الحد الأقصى 1000 صف في العملية.</p>
+  <textarea id="productCsvText" rows="7" placeholder="name,price,currency,model_number,category,stock_quantity,image_url,description,is_available&#10;عباية صافي,1400,YER,4830,عبايات,5,,عباية سوداء,true"></textarea>
+  <div class="form-actions"><button id="importProductsBtn" type="button" onclick="importProductsCsv()">استيراد المنتجات</button></div>
+  <p id="productImportResult" role="status" aria-live="polite"></p>
 </div>
 
 <div class="wrap">
@@ -2114,6 +2127,42 @@ async function loadProducts() {
   }
 }
 
+async function importProductsCsv() {
+  const businessId = document.getElementById("businessSelect").value;
+  const csvText = document.getElementById("productCsvText").value;
+  const resultBox = document.getElementById("productImportResult");
+  const button = document.getElementById("importProductsBtn");
+  if (!businessId) {
+    resultBox.textContent = "اختر المتجر أولًا.";
+    return;
+  }
+  if (!csvText.trim()) {
+    resultBox.textContent = "الصق بيانات CSV أولًا.";
+    return;
+  }
+  if (!confirm("سيتم إضافة المنتجات الجديدة إلى المتجر المحدد فقط. هل تريد المتابعة؟")) return;
+  button.disabled = true;
+  resultBox.textContent = "جارٍ التحقق من البيانات واستيرادها...";
+  try {
+    const result = await api("/api/admin/products/import-csv", {
+      method: "POST",
+      body: JSON.stringify({business_id: businessId, csv_text: csvText})
+    });
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    resultBox.textContent = "اكتمل الاستيراد. أضيف: " + result.created +
+      "، تم تخطيه: " + result.skipped + "، أخطاء: " + result.errors.length +
+      (result.errors.length ? " — " + result.errors.slice(0, 5).join(" | ") : "");
+    await loadProducts();
+    if (result.errors.length) {
+      resultBox.textContent += " (عُرضت أول 5 أخطاء فقط).";
+    }
+  } catch (error) {
+    resultBox.textContent = error.message || "تعذر استيراد المنتجات.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderProducts() {
   const rows = document.getElementById("productRows");
   rows.replaceChildren();
@@ -2632,6 +2681,131 @@ if (auth) {
                 status_code=500,
                 detail="تعذرت إضافة المنتج. تحقق من أعمدة جدول products.",
             )
+
+    @router.post("/api/admin/products/import-csv")
+    def import_products_csv(
+        payload: ProductCsvImport,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _admin)
+        get_business_or_404(payload.business_id)
+
+        try:
+            reader = csv.DictReader(io.StringIO(payload.csv_text.lstrip("\\ufeff")))
+            if not reader.fieldnames:
+                raise HTTPException(status_code=400, detail="لم يتم العثور على صف عناوين الأعمدة.")
+            aliases = {
+                "name": ("name", "product_name", "اسم المنتج", "المنتج"),
+                "price": ("price", "السعر"),
+                "currency": ("currency", "العملة"),
+                "model_number": ("model_number", "model", "sku", "رقم الموديل", "الموديل", "رقم الصنف"),
+                "category": ("category", "التصنيف", "الفئة"),
+                "stock_quantity": ("stock_quantity", "stock", "quantity", "المخزون", "الكمية"),
+                "image_url": ("image_url", "image", "رابط الصورة", "صورة المنتج"),
+                "description": ("description", "الوصف", "وصف المنتج"),
+                "is_available": ("is_available", "available", "متاح"),
+            }
+            normalized_headers = {
+                str(header or "").strip().lower(): str(header or "")
+                for header in reader.fieldnames
+            }
+            columns = {}
+            for key, choices in aliases.items():
+                for choice in choices:
+                    if choice.lower() in normalized_headers:
+                        columns[key] = normalized_headers[choice.lower()]
+                        break
+            if "name" not in columns or "price" not in columns:
+                raise HTTPException(
+                    status_code=400,
+                    detail="يجب أن يحتوي CSV على عمودي name وprice أو «اسم المنتج» و«السعر».",
+                )
+
+            rows = list(reader)
+            if len(rows) > 1000:
+                raise HTTPException(status_code=400, detail="الحد الأقصى 1000 صف في كل عملية.")
+            if not rows:
+                raise HTTPException(status_code=400, detail="لا توجد صفوف منتجات بعد صف العناوين.")
+
+            existing_result = (
+                supabase.table("products")
+                .select("name, model_number")
+                .eq("business_id", payload.business_id)
+                .limit(5000)
+                .execute()
+            )
+            existing_names = {
+                str(row.get("name") or "").strip().casefold()
+                for row in (existing_result.data or [])
+            }
+            existing_models = {
+                str(row.get("model_number") or "").strip().casefold()
+                for row in (existing_result.data or [])
+                if str(row.get("model_number") or "").strip()
+            }
+            new_products = []
+            errors = []
+            skipped = 0
+            seen_names = set(existing_names)
+            seen_models = set(existing_models)
+
+            def cell_value(row, key, default=""):
+                header = columns.get(key)
+                return str(row.get(header, default) or "").strip() if header else default
+
+            for row_number, row in enumerate(rows, start=2):
+                name = cell_value(row, "name")
+                price_text = cell_value(row, "price").replace(",", "")
+                model = cell_value(row, "model_number")
+                try:
+                    if not name:
+                        raise ValueError("اسم المنتج فارغ")
+                    price = Decimal(price_text)
+                    if not price.is_finite() or price < 0:
+                        raise ValueError("السعر يجب أن يكون رقمًا موجبًا أو صفرًا")
+                    stock_text = cell_value(row, "stock_quantity", "0") or "0"
+                    stock = int(stock_text)
+                    if stock < 0 or stock > 100000000:
+                        raise ValueError("كمية المخزون خارج النطاق")
+                    currency = (cell_value(row, "currency", "YER") or "YER").upper()
+                    if len(currency) > 10:
+                        raise ValueError("رمز العملة طويل جدًا")
+                    if name.casefold() in seen_names or (model and model.casefold() in seen_models):
+                        skipped += 1
+                        continue
+                    available_text = (cell_value(row, "is_available", "true") or "true").lower()
+                    if available_text in ("true", "1", "yes", "y", "نعم", "متاح"):
+                        available = True
+                    elif available_text in ("false", "0", "no", "n", "لا", "غير متاح"):
+                        available = False
+                    else:
+                        raise ValueError("قيمة is_available يجب أن تكون true أو false")
+                    product = {
+                        "business_id": payload.business_id,
+                        "name": name[:200],
+                        "description": cell_value(row, "description")[:2000],
+                        "price": float(price),
+                        "currency": currency,
+                        "is_available": available,
+                        "model_number": model[:120],
+                        "category": cell_value(row, "category")[:120],
+                        "image_url": cell_value(row, "image_url")[:2000],
+                        "stock_quantity": stock,
+                    }
+                    new_products.append(product)
+                    seen_names.add(name.casefold())
+                    if model:
+                        seen_models.add(model.casefold())
+                except (ValueError, ArithmeticError) as exc:
+                    errors.append(f"الصف {row_number}: {str(exc)[:180]}")
+            if new_products:
+                supabase.table("products").insert(new_products).execute()
+            return {"success": True, "created": len(new_products), "skipped": skipped, "errors": errors}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر استيراد كتالوج المنتجات")
+            raise HTTPException(status_code=500, detail="تعذر استيراد الكتالوج. تحقق من تنسيق CSV وأعمدة جدول products.")
 
     @router.patch("/api/admin/products/{product_id}")
     def update_product(
