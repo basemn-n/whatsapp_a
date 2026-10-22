@@ -1465,10 +1465,17 @@ async def process_telegram_update(update: dict):
         sender_name = str(sender.get("first_name") or "عميل").strip()
         reply_to = message.get("message_id")
         if is_customer_order_intent(user_text):
+            private_link = (
+                "https://t.me/SmartCustomerHelp2026Bot?start="
+                + str(business_id)
+            )
             reply_text = (
-                f"أهلًا {sender_name}، يسعدنا خدمتك. إذا رغبت في معرفة تفاصيل الطلب "
-                "أو إتمام الطلب، يُرجى مراسلتنا عبر الخاص حتى نساعدك ونأخذ بياناتك "
-                "بشكل آمن. اضغط على اسم البوت وافتح المحادثة الخاصة ثم اضغط Start."
+                f"أهلًا {sender_name}، لإتمام طلبك وحفاظًا على خصوصية بياناتك، "
+                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\n\n"
+                "1) اضغط الرابط التالي.\n"
+                "2) اضغط Start في Telegram.\n"
+                "3) أرسل «أريد طلب» واتبع التعليمات لاختيار المنتج والكمية.\n\n"
+                f"رابط إتمام الطلب: {private_link}"
             )
         else:
             context = await asyncio.to_thread(get_business_context, business_id)
@@ -1535,8 +1542,12 @@ async def process_telegram_update(update: dict):
             await send_telegram_message(
                 private_chat_id,
                 "أهلًا بك في مساعد المتجر! 👋\n"
-                "تم ربط هذه المحادثة بالمتجر الصحيح. يمكنك السؤال عن المنتجات أو الأسعار "
-                "أو كتابة «أريد طلب» للبدء.",
+                "تم ربط هذه المحادثة بالمتجر الصحيح.\n\n"
+                "لإتمام طلبك بأمان:\n"
+                "1) أرسل «أريد طلب».\n"
+                "2) اختر المنتج من القائمة.\n"
+                "3) أرسل الكمية المطلوبة واتبع التعليمات حتى تأكيد الطلب.\n\n"
+                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة.",
             )
         else:
             logger.error(
