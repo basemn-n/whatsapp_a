@@ -1451,8 +1451,21 @@ async function loadOverview() {
       api("/api/admin/orders?business_id=" + encodeURIComponent(businessId)),
       api("/api/admin/products?business_id=" + encodeURIComponent(businessId))
     ]);
-    allOrders = Array.isArray(orderData.orders) ? orderData.orders : [];
-    currentProducts = Array.isArray(productData.products) ? productData.products : [];
+    // Ignore late responses if the user has switched stores while requests were in flight.
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    const nextOrders = Array.isArray(orderData.orders) ? orderData.orders : [];
+    const nextProducts = Array.isArray(productData.products) ? productData.products : [];
+    if (nextOrders.some(row => row.business_id && String(row.business_id) !== businessId) ||
+        nextProducts.some(row => row.business_id && String(row.business_id) !== businessId)) {
+      allOrders = [];
+      currentProducts = [];
+      renderOrders();
+      renderProducts();
+      setMessage("تم إيقاف عرض البيانات لأن استجابة الخادم احتوت سجلات من متجر مختلف. لم يتم عرض أي سجل مختلط.");
+      return;
+    }
+    allOrders = nextOrders;
+    currentProducts = nextProducts;
     document.getElementById("overviewOrders").textContent = allOrders.length.toLocaleString("ar");
     document.getElementById("overviewProducts").textContent = currentProducts.length.toLocaleString("ar");
     document.getElementById("overviewProductSummary").textContent = currentProducts.filter(p => p.is_available && (p.stock_quantity == null || Number(p.stock_quantity) > 0)).length.toLocaleString("ar") + " منتج متاح للطلب";
@@ -1635,7 +1648,15 @@ async function loadOrders() {
     const businessId = document.getElementById("businessSelect").value;
     if (!businessId) { setMessage("أضف نشاطًا تجاريًا أو اختر نشاطًا أولًا."); return; }
     const data = await api("/api/admin/orders?business_id=" + encodeURIComponent(businessId));
-    allOrders = Array.isArray(data.orders) ? data.orders : [];
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    const nextOrders = Array.isArray(data.orders) ? data.orders : [];
+    if (nextOrders.some(row => row.business_id && String(row.business_id) !== businessId)) {
+      allOrders = [];
+      renderOrders();
+      setMessage("تم إيقاف عرض الطلبات لأن الاستجابة احتوت طلبًا تابعًا لمتجر آخر.");
+      return;
+    }
+    allOrders = nextOrders;
 
     renderOrders();
 
@@ -2076,7 +2097,15 @@ async function loadProducts() {
       encodeURIComponent(businessId)
     );
 
-    currentProducts = data.products || [];
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    const nextProducts = Array.isArray(data.products) ? data.products : [];
+    if (nextProducts.some(row => row.business_id && String(row.business_id) !== businessId)) {
+      currentProducts = [];
+      renderProducts();
+      setMessage("تم إيقاف عرض المنتجات لأن الاستجابة احتوت منتجًا تابعًا لمتجر آخر.");
+      return;
+    }
+    currentProducts = nextProducts;
     renderProducts();
 
     setMessage("عدد المنتجات: " + currentProducts.length);
@@ -2274,11 +2303,18 @@ document.getElementById("productForm")
 
 document.getElementById("businessSelect")
   .addEventListener("change", () => {
+    // Clear the previous tenant's data immediately; never leave it visible while
+    // the newly selected tenant's requests are loading.
+    currentProducts = [];
+    allOrders = [];
+    renderProducts();
+    renderOrders();
     resetProductForm();
     updateTelegramCustomerLink();
     loadProducts();
     loadOrders();
     loadReports();
+    if (!document.getElementById("overviewPanel").classList.contains("hidden")) loadOverview();
   });
 
 document.getElementById("filter")
