@@ -1726,8 +1726,8 @@ async function loadOverview() {
     if (document.getElementById("businessSelect").value !== businessId) return;
     const nextOrders = Array.isArray(orderData.orders) ? orderData.orders : [];
     const nextProducts = Array.isArray(productData.products) ? productData.products : [];
-    if (nextOrders.some(row => row.business_id && String(row.business_id) !== businessId) ||
-        nextProducts.some(row => row.business_id && String(row.business_id) !== businessId)) {
+    if (nextOrders.some(row => String(row.business_id || "") !== businessId) ||
+        nextProducts.some(row => String(row.business_id || "") !== businessId)) {
       allOrders = [];
       currentProducts = [];
       renderOrders();
@@ -1923,7 +1923,7 @@ async function loadOrders() {
     const data = await api("/api/admin/orders?business_id=" + encodeURIComponent(businessId));
     if (document.getElementById("businessSelect").value !== businessId) return;
     const nextOrders = Array.isArray(data.orders) ? data.orders : [];
-    if (nextOrders.some(row => row.business_id && String(row.business_id) !== businessId)) {
+    if (nextOrders.some(row => String(row.business_id || "") !== businessId)) {
       allOrders = [];
       renderOrders();
       setMessage("تم إيقاف عرض الطلبات لأن الاستجابة احتوت طلبًا تابعًا لمتجر آخر.");
@@ -2372,7 +2372,7 @@ async function loadProducts() {
 
     if (document.getElementById("businessSelect").value !== businessId) return;
     const nextProducts = Array.isArray(data.products) ? data.products : [];
-    if (nextProducts.some(row => row.business_id && String(row.business_id) !== businessId)) {
+    if (nextProducts.some(row => String(row.business_id || "") !== businessId)) {
       currentProducts = [];
       renderProducts();
       setMessage("تم إيقاف عرض المنتجات لأن الاستجابة احتوت منتجًا تابعًا لمتجر آخر.");
