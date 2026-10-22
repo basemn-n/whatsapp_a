@@ -161,6 +161,13 @@ class BusinessProfileUpdate(BaseModel):
     industry: str = Field(default="", max_length=100)
     description: str = Field(default="", max_length=2000)
 
+class BusinessAssistantSettingsUpdate(BaseModel):
+    business_id: str
+    business_description: str = Field(default="", max_length=3000)
+    business_policies: str = Field(default="", max_length=5000)
+    business_hours: str = Field(default="", max_length=500)
+    currency: str = Field(default="YER", min_length=3, max_length=10)
+
 
 class ProductCreate(BaseModel):
     business_id: str
@@ -1090,9 +1097,22 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <div class="grid">
 <div><label for="profileStoreName">اسم المتجر *</label><input id="profileStoreName" maxlength="160" required minlength="2"></div>
 <div><label for="profileIndustry">نوع النشاط</label><input id="profileIndustry" maxlength="100" placeholder="مثل: عبايات، إلكترونيات، ملابس"></div>
-<div class="full"><label for="profileDescription">نبذة عن المتجر وسياسة الخدمة</label><textarea id="profileDescription" rows="5" maxlength="2000" placeholder="اكتب وصفًا واضحًا للمتجر والخدمات التي يقدمها. لا تضع معلومات سرية هنا."></textarea><small>تظهر النبذة في صفحة المتجر العامة؛ لا تضف بيانات خاصة أو معلومات دخول.</small></div>
+<div class="full"><label for="profileDescription">نبذة عن المتجر</label><textarea id="profileDescription" rows="4" maxlength="2000" placeholder="نبذة عامة تظهر في صفحة المتجر. لا تضع معلومات سرية هنا."></textarea><small>تظهر النبذة في صفحة المتجر العامة؛ لا تضف بيانات خاصة أو معلومات دخول.</small></div>
 </div>
-<div class="form-actions"><button id="saveBusinessProfileBtn" type="submit">حفظ إعدادات المتجر</button><button type="button" class="secondary" onclick="loadBusinessProfile()">إعادة تحميل</button></div>
+<div class="form-actions"><button id="saveBusinessProfileBtn" type="submit">حفظ بيانات المتجر</button><button type="button" class="secondary" onclick="loadBusinessProfile()">إعادة تحميل</button></div>
+</form>
+<hr>
+<h3>تعليمات المساعد الذكي</h3>
+<p>هذه المعلومات خاصة بهذا المتجر، ويستخدمها المساعد في ردوده على العملاء. اترك أي معلومة غير معتمدة فارغة؛ لن يخمّن المساعد التفاصيل الناقصة.</p>
+<form id="businessAssistantSettingsForm">
+<input type="hidden" id="assistantSettingsBusinessId">
+<div class="grid">
+<div class="full"><label for="assistantBusinessDescription">معلومات الخدمة التي يمكن للمساعد ذكرها</label><textarea id="assistantBusinessDescription" rows="3" maxlength="3000" placeholder="الخدمات، مناطق الخدمة، طريقة الطلب، معلومات مهمة للعميل"></textarea></div>
+<div class="full"><label for="assistantBusinessPolicies">سياسات الاستبدال والإرجاع والتوصيل والدفع</label><textarea id="assistantBusinessPolicies" rows="4" maxlength="5000" placeholder="مثال: مدة الاستبدال، رسوم التوصيل، طرق الدفع المتاحة، شروط الإرجاع"></textarea></div>
+<div><label for="assistantBusinessHours">ساعات وأيام العمل</label><textarea id="assistantBusinessHours" rows="2" maxlength="500" placeholder="مثال: السبت–الخميس، 9 صباحًا–5 مساءً"></textarea></div>
+<div><label for="assistantCurrency">العملة الافتراضية</label><select id="assistantCurrency"><option value="YER">ريال يمني (YER)</option><option value="SAR">ريال سعودي (SAR)</option><option value="USD">دولار أمريكي (USD)</option><option value="AED">درهم إماراتي (AED)</option><option value="EGP">جنيه مصري (EGP)</option></select></div>
+</div>
+<div class="form-actions"><button id="saveAssistantSettingsBtn" type="submit">حفظ تعليمات المساعد</button><button type="button" class="secondary" onclick="loadBusinessProfile()">إعادة تحميل الإعدادات</button></div>
 </form>
 </section>
 
@@ -1488,7 +1508,14 @@ async function loadBusinessProfile() {
     document.getElementById("profileStoreName").value = business.name || "";
     document.getElementById("profileIndustry").value = business.industry || "";
     document.getElementById("profileDescription").value = business.description || "";
-    setMessage("تم تحميل إعدادات المتجر.");
+    document.getElementById("assistantSettingsBusinessId").value = businessId;
+    const assistant = await api("/api/admin/business-assistant-settings?business_id=" + encodeURIComponent(businessId));
+    const settings = assistant.settings || {};
+    document.getElementById("assistantBusinessDescription").value = settings.business_description || "";
+    document.getElementById("assistantBusinessPolicies").value = settings.business_policies || "";
+    document.getElementById("assistantBusinessHours").value = settings.business_hours || "";
+    document.getElementById("assistantCurrency").value = settings.currency || "YER";
+    setMessage("تم تحميل بيانات المتجر وتعليمات المساعد.");
   } catch (error) {
     setMessage(error.message || "تعذر تحميل إعدادات المتجر.");
   }
@@ -1520,6 +1547,34 @@ document.getElementById("businessProfileForm").addEventListener("submit", async 
     setMessage("تم حفظ إعدادات المتجر بنجاح. سيظهر الاسم والنشاط والنبذة في صفحة المتجر العامة.");
   } catch (error) {
     setMessage(error.message || "تعذر حفظ إعدادات المتجر.");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById("businessAssistantSettingsForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = document.getElementById("saveAssistantSettingsBtn");
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId || businessId !== document.getElementById("assistantSettingsBusinessId").value) {
+    setMessage("تغير المتجر المحدد؛ أعد تحميل إعداداته قبل الحفظ.");
+    return;
+  }
+  button.disabled = true;
+  try {
+    await api("/api/admin/business-assistant-settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        business_id: businessId,
+        business_description: document.getElementById("assistantBusinessDescription").value.trim(),
+        business_policies: document.getElementById("assistantBusinessPolicies").value.trim(),
+        business_hours: document.getElementById("assistantBusinessHours").value.trim(),
+        currency: document.getElementById("assistantCurrency").value
+      })
+    });
+    setMessage("تم حفظ تعليمات المساعد لهذا المتجر. سيعتمد عليها في ردوده دون خلطها بمتاجر أخرى.");
+  } catch (error) {
+    setMessage(error.message || "تعذر حفظ تعليمات المساعد.");
   } finally {
     button.disabled = false;
   }
@@ -2381,6 +2436,82 @@ if (auth) {
         except Exception:
             logger.exception("تعذر حفظ إعدادات المتجر.")
             raise HTTPException(status_code=500, detail="تعذر حفظ إعدادات المتجر")
+
+    @router.get("/api/admin/business-assistant-settings")
+    def get_business_assistant_settings(
+        business_id: str,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+        try:
+            result = (
+                supabase.table("business_settings")
+                .select("business_id, business_description, business_policies, business_hours, currency")
+                .eq("business_id", business_id)
+                .limit(1)
+                .execute()
+            )
+            settings = result.data[0] if result.data else {
+                "business_id": business_id,
+                "business_description": "",
+                "business_policies": "",
+                "business_hours": "",
+                "currency": "YER",
+            }
+            return {"settings": settings}
+        except Exception:
+            logger.exception("تعذر تحميل تعليمات المساعد.")
+            raise HTTPException(
+                status_code=503,
+                detail="جدول إعدادات المساعد غير جاهز. نفّذ ملف ترحيل business_settings في Supabase ثم أعد المحاولة.",
+            )
+
+    @router.patch("/api/admin/business-assistant-settings")
+    def update_business_assistant_settings(
+        payload: BusinessAssistantSettingsUpdate,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _admin)
+        get_business_or_404(payload.business_id)
+        currency = payload.currency.strip().upper()
+        if currency not in {"YER", "SAR", "USD", "AED", "EGP"}:
+            raise HTTPException(status_code=400, detail="العملة المحددة غير مدعومة")
+        values = {
+            "business_id": payload.business_id,
+            "business_description": payload.business_description.strip(),
+            "business_policies": payload.business_policies.strip(),
+            "business_hours": payload.business_hours.strip(),
+            "currency": currency,
+        }
+        try:
+            result = (
+                supabase.table("business_settings")
+                .upsert(values, on_conflict="business_id")
+                .execute()
+            )
+            if not result.data:
+                verify = (
+                    supabase.table("business_settings")
+                    .select("business_id, business_description, business_policies, business_hours, currency")
+                    .eq("business_id", payload.business_id)
+                    .limit(1)
+                    .execute()
+                )
+                saved = verify.data[0] if verify.data else None
+            else:
+                saved = result.data[0]
+            if not saved:
+                raise HTTPException(status_code=500, detail="لم يتم تأكيد حفظ تعليمات المساعد")
+            return {"success": True, "settings": saved}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر حفظ تعليمات المساعد.")
+            raise HTTPException(
+                status_code=503,
+                detail="تعذر حفظ تعليمات المساعد. تأكد من تنفيذ ملف ترحيل business_settings في Supabase.",
+            )
 
     @router.get("/api/admin/products")
     def list_products(
