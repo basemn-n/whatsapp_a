@@ -1473,8 +1473,52 @@ async def process_telegram_update(update: dict):
         )
         return
 
-    # Keep private chat behavior unchanged in this routing update.
-    logger.info("Telegram private message received (message_id=%s).", message.get("message_id"))
+    # Private chat: bind the customer to the store from the bot deep-link,
+    # then answer privately so order details and personal data are never public.
+    sender = message.get("from") or {}
+    private_chat_id = int(chat.get("id"))
+    user_text = str(message.get("text") or message.get("caption") or "").strip()
+
+    if user_text.startswith("/start"):
+        parts = user_text.split(maxsplit=1)
+        business_id = parts[1].strip() if len(parts) > 1 else ""
+        if business_id and await asyncio.to_thread(
+            save_telegram_business, private_chat_id, business_id
+        ):
+            await send_telegram_message(
+                private_chat_id,
+                "أهلًا بك في مساعد المتجر! 👋\n"
+                "تم ربط هذه المحادثة بالمتجر الصحيح. يمكنك السؤال عن المنتجات أو الأسعار "
+                "أو كتابة «أريد طلب» للبدء.",
+            )
+        else:
+            await send_telegram_message(
+                private_chat_id,
+                "أهلًا بك! 👋 لربطك بمتجر محدد، افتح رابط مساعد ذلك المتجر من منشوراته "
+                "واضغط Start. بعد الربط يمكنك السؤال عن المنتجات أو بدء طلبك.",
+            )
+        return
+
+    if user_text.startswith("/cancel"):
+        clear_pending_telegram_order(private_chat_id)
+        await send_telegram_message(private_chat_id, "تم إلغاء الطلب الجاري.")
+        return
+
+    if user_text:
+        reply_text = await respond_to_telegram_text(private_chat_id, user_text)
+        await send_telegram_message(private_chat_id, reply_text)
+        return
+
+    # Do not expose or collect voice/photo content in a public group. Private
+    # non-text media gets a clear prompt until its dedicated processing is available.
+    if message.get("photo") or message.get("voice") or message.get("audio"):
+        await send_telegram_message(
+            private_chat_id,
+            "وصلتني الوسائط. أرسل سؤالك كتابةً حاليًا، أو اذكر اسم المنتج ورقم الموديل.",
+        )
+        return
+
+    logger.info("Telegram private update contained no supported text.")
 
 
 @app.post("/telegram/webhook")
