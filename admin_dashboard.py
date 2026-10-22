@@ -7,10 +7,12 @@ import secrets
 import base64
 import json
 import time
+import csv
+import io
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 
@@ -1023,6 +1025,7 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <p>تعرض التقارير حتى 1000 طلب حديث. تُحسب المبيعات الدقيقة من إجمالي السعر المحفوظ وقت إنشاء الطلب، لكن للطلبات التي تم تسليمها فقط. إذا ظهرت «لا توجد بيانات»، فهذا يعني أنه لا توجد طلبات مسلّمة ذات إجمالي محفوظ؛ وتظهر الطلبات القديمة التي لا تملك سعرًا محفوظًا كتقدير منفصل حسب السعر الحالي للمنتج. الطلبات قيد المراجعة أو التجهيز أو التوصيل لا تُحتسب مبيعات بعد، والطلبات الملغاة تُعرض منفصلة.</p>
 <div class="toolbar">
 <button id="refreshReportsBtn" onclick="loadReports()">تحديث التقرير</button>
+<button type="button" class="secondary" onclick="downloadSalesCsv()">تصدير الطلبات CSV</button>
 </div>
 <div class="stats">
   <div class="stat-card"><span>إجمالي الطلبات</span><strong id="reportTotalOrders">—</strong></div>
@@ -1529,6 +1532,43 @@ function formatMoneyGroups(groups) {
       Number(amount).toLocaleString("ar", {maximumFractionDigits: 2}) + " " + currency
     )
     .join("، ");
+}
+
+async function downloadSalesCsv() {
+  try {
+    if (!(await ensureLogin())) return;
+    if (!businesses.length) await loadBusinesses();
+    const businessId = document.getElementById("businessSelect").value;
+    if (!businessId) {
+      setMessage("اختر المتجر أولًا.");
+      return;
+    }
+    setMessage("جارٍ تجهيز ملف الطلبات...");
+    const response = await fetch(
+      "/api/admin/reports/sales.csv?business_id=" + encodeURIComponent(businessId),
+      {headers: {"Authorization": auth}}
+    );
+    if (response.status === 401) {
+      await api("/api/admin/businesses");
+      return;
+    }
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw Error(error.detail || "تعذر تصدير الطلبات.");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "sales-orders-" + businessId + ".csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage("تم تجهيز ملف CSV للمتجر المحدد.");
+  } catch (error) {
+    setMessage(error.message);
+  }
 }
 
 async function loadReports() {
@@ -2396,6 +2436,67 @@ if (auth) {
                 status_code=500,
                 detail="تعذر إنشاء تقرير المبيعات. تحقق من جداول الطلبات والمنتجات.",
             )
+
+    @router.get("/api/admin/reports/sales.csv")
+    def export_sales_csv(
+        business_id: str,
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+        try:
+            result = (
+                supabase.table("orders")
+                .select(
+                    "order_number, created_at, customer_name, product_name, "
+                    "quantity, status, total_price, currency, payment_method"
+                )
+                .eq("business_id", business_id)
+                .order("created_at", desc=True)
+                .limit(1000)
+                .execute()
+            )
+            output = io.StringIO(newline="")
+            writer = csv.writer(output)
+            writer.writerow([
+                "رقم الطلب", "تاريخ الإنشاء", "اسم العميل", "المنتج",
+                "الكمية", "الحالة", "الإجمالي المحفوظ", "العملة", "طريقة الدفع",
+            ])
+
+            def safe_csv_text(value):
+                text = "" if value is None else str(value)
+                # Prevent spreadsheet formula execution when opening exported CSV.
+                if text.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")):
+                    return "'" + text
+                return text
+
+            for order in result.data or []:
+                writer.writerow([
+                    safe_csv_text(order.get("order_number")),
+                    safe_csv_text(order.get("created_at")),
+                    safe_csv_text(order.get("customer_name")),
+                    safe_csv_text(order.get("product_name")),
+                    safe_csv_text(order.get("quantity")),
+                    safe_csv_text(order.get("status")),
+                    safe_csv_text(order.get("total_price")),
+                    safe_csv_text(order.get("currency")),
+                    safe_csv_text(order.get("payment_method")),
+                ])
+
+            content = "\ufeff" + output.getvalue()
+            return Response(
+                content=content,
+                media_type="text/csv; charset=utf-8",
+                headers={
+                    "Content-Disposition": (
+                        f'attachment; filename="sales-orders-{business_id}.csv"'
+                    ),
+                    "Cache-Control": "no-store",
+                },
+            )
+        except Exception:
+            logger.exception("تعذر تصدير طلبات المبيعات")
+            raise HTTPException(status_code=500, detail="تعذر تصدير ملف الطلبات.")
 
     @router.patch("/api/admin/orders/{order_id}/status")
     def update_status(
