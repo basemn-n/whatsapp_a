@@ -2691,7 +2691,7 @@ if (auth) {
         get_business_or_404(payload.business_id)
 
         try:
-            reader = csv.DictReader(io.StringIO(payload.csv_text.lstrip("\\ufeff")))
+            reader = csv.DictReader(io.StringIO(payload.csv_text.lstrip("\ufeff")))
             if not reader.fieldnames:
                 raise HTTPException(status_code=400, detail="لم يتم العثور على صف عناوين الأعمدة.")
             aliases = {
