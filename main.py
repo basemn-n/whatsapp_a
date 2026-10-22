@@ -1346,9 +1346,17 @@ async def process_telegram_update(update: dict):
 
     message = update.get("message") or {}
     chat = message.get("chat") or {}
-    # Customer service should answer in private chats only. Group messages
-    # are ignored, while channel_post updates are handled by the import branch.
-    if chat.get("type") != "private":
+    chat_type = str(chat.get("type") or "unknown")
+    if chat_type != "private":
+        # Diagnostic only: log group identity and message type, never message text.
+        logger.info(
+            "Telegram non-private update received: chat_id=%s chat_type=%s "
+            "chat_title=%s message_id=%s; customer reply skipped.",
+            str(chat.get("id") or ""),
+            chat_type,
+            str(chat.get("title") or "")[:120],
+            str(message.get("message_id") or ""),
+        )
         return
     chat_id = chat.get("id")
     user_text = (message.get("text") or "").strip()
