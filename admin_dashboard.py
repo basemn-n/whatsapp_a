@@ -11,7 +11,7 @@ import csv
 import io
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
@@ -1148,9 +1148,18 @@ onclick="resetProductForm()">إلغاء التعديل</button>
       <div class="sub-panel">
   <h3>استيراد كتالوج المنتجات دفعة واحدة</h3>
   <p>الصق بيانات CSV المنسوخة من Excel أو Google Sheets. الأعمدة المطلوبة: <code>name</code> و<code>price</code>. الأعمدة الاختيارية: <code>currency, model_number, category, stock_quantity, image_url, description, is_available</code>.</p>
-  <p>لا تُستبدل المنتجات الموجودة تلقائيًا؛ سيتم تخطي الاسم أو رقم الموديل الموجود مسبقًا في المتجر نفسه. الحد الأقصى 1000 صف في العملية.</p>
-  <textarea id="productCsvText" rows="7" placeholder="name,price,currency,model_number,category,stock_quantity,image_url,description,is_available&#10;عباية صافي,1400,YER,4830,عبايات,5,,عباية سوداء,true"></textarea>
-  <div class="form-actions"><button id="importProductsBtn" type="button" onclick="importProductsCsv()">استيراد المنتجات</button></div>
+  <p>يمكنك لصق CSV من Excel، أو رفع PDF/صورة ليحاول الذكاء الاصطناعي استخراج أسماء المنتجات والموديلات والأسعار. راجع البيانات وعدّلها قبل الحفظ. لا تُحفظ المنتجات تلقائيًا.</p>
+  <div class="sub-panel">
+    <label for="catalogFile">رفع كتالوج PDF أو صورة (JPG / PNG / WEBP)</label>
+    <input id="catalogFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp">
+    <div class="form-actions"><button id="extractCatalogBtn" type="button" onclick="extractCatalogFile()">تحليل الملف ومعاينة المنتجات</button></div>
+    <p id="catalogExtractResult" role="status" aria-live="polite"></p>
+    <p class="muted">للحفاظ على الدقة، ارفع PDF لا يتجاوز 20 ميجابايت وبحد أقصى 40 صفحة في العملية. الصور المضمنة في الملف تُستخدم للاستخراج، لكن لا تُحفظ كصور منتجات تلقائيًا؛ أضف رابط الصورة في عمود image_url عند توفره.</p>
+  </div>
+  <p><strong>مراجعة البيانات قبل الحفظ</strong></p>
+  <p>الأعمدة: <code>name,price,currency,model_number,category,stock_quantity,image_url,description,is_available</code>. صحّح الاسم والسعر والموديل والمخزون يدويًا إذا لزم.</p>
+  <textarea id="productCsvText" rows="9" placeholder="name,price,currency,model_number,category,stock_quantity,image_url,description,is_available&#10;عباية صافي,1400,YER,4830,عبايات,5,,عباية سوداء,true"></textarea>
+  <div class="form-actions"><button id="importProductsBtn" type="button" onclick="importProductsCsv()">حفظ المنتجات بعد المراجعة</button></div>
   <p id="productImportResult" role="status" aria-live="polite"></p>
 </div>
     </section>
@@ -2212,6 +2221,57 @@ async function loadProducts() {
   }
 }
 
+function csvCell(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+async function extractCatalogFile() {
+  const businessId = document.getElementById("businessSelect").value;
+  const input = document.getElementById("catalogFile");
+  const resultBox = document.getElementById("catalogExtractResult");
+  const button = document.getElementById("extractCatalogBtn");
+  const file = input.files && input.files[0];
+  if (!businessId) {
+    resultBox.textContent = "اختر المتجر أولًا.";
+    return;
+  }
+  if (!file) {
+    resultBox.textContent = "اختر ملف PDF أو صورة أولًا.";
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    resultBox.textContent = "حجم الملف يتجاوز 20 ميجابايت.";
+    return;
+  }
+  button.disabled = true;
+  resultBox.textContent = "جارٍ تحليل الملف. قد يستغرق ذلك وقتًا حسب عدد الصفحات...";
+  try {
+    const form = new FormData();
+    form.append("business_id", businessId);
+    form.append("file", file);
+    const result = await api("/api/admin/products/extract-catalog", {
+      method: "POST",
+      body: form
+    });
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    const columns = ["name","price","currency","model_number","category","stock_quantity","image_url","description","is_available"];
+    const lines = [columns.join(",")];
+    (result.products || []).forEach(product => {
+      lines.push(columns.map(key => csvCell(product[key])).join(","));
+    });
+    document.getElementById("productCsvText").value = lines.join("\n");
+    resultBox.textContent = "تم استخراج " + (result.products || []).length +
+      " صفًا للمعاينة. راجع البيانات أدناه وصحّحها قبل الضغط على «حفظ المنتجات بعد المراجعة»." +
+      (result.warnings && result.warnings.length ? " ملاحظات: " + result.warnings.slice(0, 3).join(" | ") : "");
+    document.getElementById("productImportResult").textContent = "";
+  } catch (error) {
+    resultBox.textContent = error.message || "تعذر تحليل الملف. جرّب صورة أو PDF أوضح.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function importProductsCsv() {
   const businessId = document.getElementById("businessSelect").value;
   const csvText = document.getElementById("productCsvText").value;
@@ -2768,6 +2828,152 @@ if (auth) {
                 status_code=500,
                 detail="تعذرت إضافة المنتج. تحقق من أعمدة جدول products.",
             )
+
+    @router.post("/api/admin/products/extract-catalog")
+    def extract_product_catalog(
+        business_id: str,
+        file: UploadFile = File(...),
+        _admin=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _admin)
+        get_business_or_404(business_id)
+
+        filename = str(file.filename or "").lower()
+        content_type = str(file.content_type or "").lower()
+        try:
+            raw = file.file.read(20 * 1024 * 1024 + 1)
+            if not raw:
+                raise HTTPException(status_code=400, detail="الملف فارغ.")
+            if len(raw) > 20 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="الحد الأقصى لحجم الملف 20 ميجابايت.")
+
+            pages = []
+            if filename.endswith(".pdf") or content_type == "application/pdf" or raw.startswith(b"%PDF-"):
+                try:
+                    import fitz
+                    document = fitz.open(stream=raw, filetype="pdf")
+                except Exception:
+                    raise HTTPException(status_code=400, detail="تعذر فتح PDF. تأكد أن الملف سليم وغير محمي بكلمة مرور.")
+                if document.page_count > 40:
+                    document.close()
+                    raise HTTPException(status_code=400, detail="الحد الأقصى 40 صفحة في العملية. قسّم الكتالوج الكبير إلى ملفات أصغر.")
+                for page_number, page in enumerate(document, start=1):
+                    page_text = (page.get_text("text") or "").strip()
+                    # Render pages as images so scanned/image-only PDFs can be read too.
+                    pixmap = page.get_pixmap(matrix=fitz.Matrix(1.35, 1.35), alpha=False)
+                    pages.append({
+                        "page": page_number,
+                        "text": page_text[:12000],
+                        "image": pixmap.tobytes("png"),
+                        "mime": "image/png",
+                    })
+                document.close()
+            else:
+                valid_image = (
+                    raw.startswith(b"\xff\xd8\xff")
+                    or raw.startswith(b"\x89PNG\r\n\x1a\n")
+                    or (len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP")
+                )
+                if not valid_image:
+                    raise HTTPException(status_code=400, detail="الملف غير مدعوم. ارفع PDF أو صورة JPG أو PNG أو WEBP.")
+                if len(raw) > 12 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="حجم الصورة يتجاوز حد المعالجة 12 ميجابايت.")
+                pages.append({"page": 1, "text": "", "image": raw, "mime": "image/jpeg" if raw.startswith(b"\xff\xd8\xff") else ("image/webp" if raw[8:12] == b"WEBP" else "image/png")})
+
+            from bot_logic import vision_llm
+            from langchain_core.messages import HumanMessage, SystemMessage
+            import base64
+            import json as json_module
+            import re as re_module
+
+            extracted = []
+            warnings = []
+            system_prompt = (
+                "أنت أداة استخراج بيانات كتالوج منتجات من صفحات مصورة. "
+                "أعد JSON صالحًا فقط بالشكل {\"products\":[{\"name\":\"\",\"price\":null,"
+                "\"currency\":\"YER\",\"model_number\":\"\",\"category\":\"\","
+                "\"stock_quantity\":0,\"image_url\":\"\",\"description\":\"\",\"is_available\":false}]}. "
+                "استخرج فقط ما يظهر بوضوح. لا تخترع اسمًا أو سعرًا أو رقم موديل. "
+                "إذا كان السعر غير مقروء اجعل price null، وإذا لم يوجد موديل اتركه فارغًا. "
+                "لا تعتبر أرقام الهاتف أو أرقام الصفحات أسعارًا. "
+                "لا تستخرج أكثر من 1000 منتج إجمالًا. اجعل المخزون 0 والتوفر false لأنهما غير معروفين ما لم يظهرا صراحة. "
+                "لا تنشئ روابط صور؛ image_url يبقى فارغًا."
+            )
+            for item in pages:
+                image_b64 = base64.b64encode(item["image"]).decode("ascii")
+                prompt = (
+                    f"حلّل الصفحة رقم {item['page']} من كتالوج متجر. "
+                    "استخرج جميع المنتجات الواضحة، منتجًا لكل عنصر. "
+                    "أرفق النص المطبوع المستخرج آليًا للمساعدة إن وجد، لكن اعتمد على الصورة للتحقق. "
+                    "أعد كائن JSON فقط بالمفتاح products. لا تضف شرحًا.\n"
+                    f"النص المستخرج من الصفحة:\n{item['text'] or '[لا يوجد نص قابل للاستخراج]'}"
+                )
+                message = HumanMessage(content=[
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{item['mime']};base64,{image_b64}"}},
+                ])
+                response = vision_llm.invoke([SystemMessage(content=system_prompt), message])
+                answer = response.content if isinstance(response.content, str) else str(response.content)
+                answer = re_module.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", answer.strip(), flags=re_module.IGNORECASE)
+                try:
+                    parsed = json_module.loads(answer)
+                except Exception:
+                    match = re_module.search(r"\{.*\}", answer, flags=re_module.DOTALL)
+                    if not match:
+                        warnings.append(f"تعذر فهم نتيجة الصفحة {item['page']}.")
+                        continue
+                    try:
+                        parsed = json_module.loads(match.group(0))
+                    except Exception:
+                        warnings.append(f"نتيجة الصفحة {item['page']} ليست JSON صالحًا.")
+                        continue
+                rows = parsed.get("products", []) if isinstance(parsed, dict) else []
+                if not isinstance(rows, list):
+                    warnings.append(f"لم تُقرأ قائمة المنتجات في الصفحة {item['page']}.")
+                    continue
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    name = str(row.get("name") or "").strip()
+                    price = row.get("price")
+                    if not name:
+                        continue
+                    if len(extracted) >= 1000:
+                        warnings.append("وصلنا إلى الحد الأقصى 1000 منتج.")
+                        break
+                    if price is not None:
+                        price_text = str(price).replace(",", "").strip()
+                        try:
+                            if not Decimal(price_text).is_finite() or Decimal(price_text) < 0:
+                                price = None
+                            else:
+                                price = price_text
+                        except Exception:
+                            price = None
+                    extracted.append({
+                        "name": name[:200],
+                        "price": price if price is not None else "",
+                        "currency": str(row.get("currency") or "YER")[:10],
+                        "model_number": str(row.get("model_number") or "")[:120],
+                        "category": str(row.get("category") or "")[:120],
+                        "stock_quantity": str(row.get("stock_quantity") if row.get("stock_quantity") is not None else 0),
+                        "image_url": "",
+                        "description": str(row.get("description") or "")[:2000],
+                        "is_available": str(row.get("is_available")).lower() if isinstance(row.get("is_available"), bool) else "false",
+                    })
+            if not extracted:
+                raise HTTPException(status_code=422, detail="لم يتم استخراج منتجات واضحة. جرّب ملفًا أوضح أو استخدم استيراد CSV.")
+            return {"success": True, "products": extracted, "warnings": warnings, "pages_processed": len(pages)}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر استخراج كتالوج المنتجات من الملف.")
+            raise HTTPException(status_code=502, detail="تعذر تحليل الكتالوج بالذكاء الاصطناعي. تحقق من إعداد GROQ_API_KEY ونموذج الصور ثم أعد المحاولة.")
+        finally:
+            try:
+                file.file.close()
+            except Exception:
+                pass
 
     @router.post("/api/admin/products/import-csv")
     def import_products_csv(
