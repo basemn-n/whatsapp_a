@@ -1296,27 +1296,59 @@ def download_telegram_audio(file_id: str):
         return None
 
 
-async def process_telegram_update(update: dict):
-    # Product publishing sources are import-only: never reply to their posts.
-    source_post = update.get("channel_post") or update.get("edited_channel_post")
-    source_kind = "channel_post" if source_post else ""
-    if not source_post:
-        candidate = update.get("message") or {}
-        candidate_chat = candidate.get("chat") or {}
-        candidate_chat_id = str(candidate_chat.get("id") or "")
-        # Group messages are catalog imports only for the explicitly configured
-        # product group. All other groups remain ignored to prevent spam/leaks.
-        if (
-            str(candidate_chat.get("type") or "") in ("group", "supergroup")
-            and TELEGRAM_PRODUCTS_CHAT_ID
-            and candidate_chat_id == TELEGRAM_PRODUCTS_CHAT_ID
-        ):
-            source_post = candidate
-            source_kind = "group_message"
+def is_telegram_group_admin(chat_id: str, user_id):
+    """Return True/False for a verified group admin; None when status cannot be checked."""
+    if not chat_id or user_id is None:
+        return None
+    try:
+        member = telegram_api(
+            "getChatMember",
+            {"chat_id": chat_id, "user_id": int(user_id)},
+            15,
+        )
+        status = str((member or {}).get("status") or "").lower()
+        return status in ("creator", "administrator")
+    except Exception:
+        logger.warning(
+            "Could not verify Telegram group sender permissions; ignoring message safely."
+        )
+        return None
 
+
+def is_customer_question_or_request(text: str):
+    """Avoid replying to greetings and ordinary group chatter."""
+    value = normalize_text(text)
+    if not value:
+        return False
+    markers = (
+        "؟", "?", "اريد", "أريد", "ابغى", "أبغى", "بكم", "كم سعر",
+        "السعر", "متوفر", "متوفره", "متوفرة", "عندكم", "هل يوجد",
+        "كيف اطلب", "كيف أطلب", "طلب", "اطلب", "أطلب", "شراء",
+        "اشتري", "أشتري", "حجز", "توصيل", "مقاس", "لون", "تفاصيل",
+        "price", "available", "order", "buy", "purchase", "delivery",
+        "how much", "can i get",
+    )
+    return any(marker in value for marker in markers)
+
+
+def is_customer_order_intent(text: str):
+    value = normalize_text(text)
+    markers = (
+        "اريد اطلب", "أريد أطلب", "ابغى اطلب", "أبغى أطلب",
+        "اريد طلب", "أريد طلب", "ابغى اشتري", "أبغى أشتري",
+        "كيف اطلب", "كيف أطلب", "طلب منتج", "تسجيل طلب",
+        "اطلب", "أطلب", "شراء", "اشتري", "أشتري", "order", "buy",
+        "purchase",
+    )
+    return any(marker in value for marker in markers)
+
+
+async def process_telegram_update(update: dict):
+    # Channel product posts are always import-only and never receive replies.
+    source_post = update.get("channel_post") or update.get("edited_channel_post")
     if source_post:
         source_chat = source_post.get("chat") or {}
-        source_chat_id = str(source_chat.get("id", ""))
+        source_chat_id = str(source_chat.get("id") or "")
         configured_chat_id = TELEGRAM_PRODUCTS_CHAT_ID
         configured_username = (
             configured_chat_id.lstrip("@").casefold()
@@ -1324,55 +1356,125 @@ async def process_telegram_update(update: dict):
             else ""
         )
         source_username = str(source_chat.get("username") or "").casefold()
-        matches_source = (
+        if configured_chat_id and (
             configured_chat_id == source_chat_id
             or (configured_username and source_username == configured_username)
-        )
-        if configured_chat_id and matches_source:
+        ):
             try:
                 business_id = await asyncio.to_thread(
                     get_channel_business_id, "telegram_products", source_chat_id
                 )
                 if not business_id:
                     business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or None
-                if not business_id:
-                    logger.error(
-                        "Telegram product import skipped: source is not mapped "
-                        "to a merchant business."
+                if business_id:
+                    result = await asyncio.to_thread(
+                        import_telegram_product_post,
+                        source_post,
+                        supabase,
+                        business_id,
+                        TELEGRAM_PRODUCTS_CURRENCY,
                     )
-                    return
-                # Only import actual catalog text/captions with explicit prices;
-                # importer skips ambiguous posts. Never send a group reply.
-                result = await asyncio.to_thread(
-                    import_telegram_product_post,
-                    source_post,
-                    supabase,
-                    business_id,
-                    TELEGRAM_PRODUCTS_CURRENCY,
-                )
-                logger.info(
-                    "Telegram product source processed: kind=%s chat_id=%s result=%s",
-                    source_kind or "channel_post",
-                    source_chat_id,
-                    result,
-                )
+                    logger.info(
+                        "Telegram product channel processed silently: chat_id=%s result=%s",
+                        source_chat_id,
+                        result,
+                    )
+                else:
+                    logger.error("Telegram product import skipped: merchant mapping missing.")
             except Exception:
-                logger.exception("Failed to import a product from Telegram.")
+                logger.exception("Failed to import a product from Telegram channel.")
         return
 
     message = update.get("message") or {}
     chat = message.get("chat") or {}
+    chat_id = str(chat.get("id") or "")
     chat_type = str(chat.get("type") or "unknown")
+
+    # In the configured product group: store admins publish products silently;
+    # non-admin customers get replies only when they ask a real product/order question.
+    if chat_type in ("group", "supergroup") and chat_id == TELEGRAM_PRODUCTS_CHAT_ID:
+        sender = message.get("from") or {}
+        sender_id = sender.get("id")
+        if sender.get("is_bot") or sender_id is None:
+            return
+
+        is_admin = await asyncio.to_thread(
+            is_telegram_group_admin, chat_id, sender_id
+        )
+        if is_admin is not False:
+            logger.info(
+                "Telegram configured group message ignored safely: sender=%s admin_status=%s",
+                sender_id,
+                is_admin,
+            )
+            return
+
+        user_text = str(message.get("text") or message.get("caption") or "").strip()
+        # Product posts from customers are not imported; only admins can publish catalog items.
+        # Customer questions and requests are handled below without collecting personal data in public.
+        if not is_customer_question_or_request(user_text):
+            return
+
+        business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or await asyncio.to_thread(
+            get_channel_business_id, "telegram_products", chat_id
+        )
+        if not business_id:
+            logger.error("Telegram group customer reply skipped: merchant mapping missing.")
+            return
+
+        sender_name = str(sender.get("first_name") or "عميل").strip()
+        reply_to = message.get("message_id")
+        if is_customer_order_intent(user_text):
+            reply_text = (
+                f"أهلًا {sender_name}، يسعدنا خدمتك. إذا رغبت في معرفة تفاصيل الطلب "
+                "أو إتمام الطلب، يُرجى مراسلتنا عبر الخاص حتى نساعدك ونأخذ بياناتك "
+                "بشكل آمن. اضغط على اسم البوت وافتح المحادثة الخاصة ثم اضغط Start."
+            )
+        else:
+            context = await asyncio.to_thread(get_business_context, business_id)
+            try:
+                reply_text = await asyncio.to_thread(
+                    generate_ai_response,
+                    f"telegram_group_{chat_id}_{sender_id}",
+                    user_text,
+                    None,
+                    context,
+                    f"telegram_group_{chat_id}_{sender_id}_{business_id}",
+                    business_id,
+                )
+            except Exception:
+                logger.exception("Failed to answer a Telegram group customer question.")
+                reply_text = (
+                    "شكرًا لاستفسارك. للحصول على تفاصيل المنتج أو إتمام الطلب، "
+                    "يُرجى مراسلتنا عبر الخاص بالضغط على اسم البوت ثم Start."
+                )
+
+        try:
+            await asyncio.to_thread(
+                telegram_api,
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": reply_text,
+                    "reply_to_message_id": int(reply_to) if reply_to is not None else None,
+                    "allow_sending_without_reply": True,
+                },
+                20,
+            )
+        except Exception:
+            logger.exception("Failed to send Telegram group customer reply.")
+        return
+
     if chat_type != "private":
         logger.info(
-            "Telegram non-private update received: chat_id=%s chat_type=%s "
-            "chat_title=%s message_id=%s; customer reply skipped.",
-            str(chat.get("id") or ""),
+            "Telegram message ignored outside configured product group: chat_id=%s type=%s",
+            chat_id,
             chat_type,
-            str(chat.get("title") or "")[:120],
-            str(message.get("message_id") or ""),
         )
         return
+
+    # Keep private chat behavior unchanged in this routing update.
+    logger.info("Telegram private message received (message_id=%s).", message.get("message_id"))
 
 
 @app.post("/telegram/webhook")
