@@ -11,3 +11,5 @@ chromadb
 openai
 pydantic
 supabase
+python-multipart
+PyMuPDF
