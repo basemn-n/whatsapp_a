@@ -1401,11 +1401,36 @@ async def process_telegram_update(update: dict):
         is_admin = await asyncio.to_thread(
             is_telegram_group_admin, chat_id, sender_id
         )
-        if is_admin is not False:
+        if is_admin is True:
+            # Only verified group admins may publish catalog items. Import silently;
+            # the importer requires explicit product details/pricing before saving.
+            try:
+                business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or await asyncio.to_thread(
+                    get_channel_business_id, "telegram_products", chat_id
+                )
+                if business_id:
+                    result = await asyncio.to_thread(
+                        import_telegram_product_post,
+                        message,
+                        supabase,
+                        business_id,
+                        TELEGRAM_PRODUCTS_CURRENCY,
+                    )
+                    logger.info(
+                        "Telegram admin product post imported silently: sender=%s result=%s",
+                        sender_id,
+                        result,
+                    )
+                else:
+                    logger.error("Telegram group product import skipped: merchant mapping missing.")
+            except Exception:
+                logger.exception("Failed to import a product from Telegram group.")
+            return
+
+        if is_admin is None:
             logger.info(
-                "Telegram configured group message ignored safely: sender=%s admin_status=%s",
+                "Telegram configured group message ignored safely: sender=%s admin_status=unknown",
                 sender_id,
-                is_admin,
             )
             return
 
