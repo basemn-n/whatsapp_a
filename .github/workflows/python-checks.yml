@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip fastapi pydantic requests httpx2
+        run: python -m pip install --upgrade pip fastapi pydantic requests httpx2 python-multipart PyMuPDF
       - name: Compile application modules
         run: python -m py_compile main.py admin_dashboard.py bot_logic.py telegram_products.py
       - name: Run merchant authorization and session tests
