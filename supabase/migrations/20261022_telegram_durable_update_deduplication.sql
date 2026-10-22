@@ -5,6 +5,9 @@ create table if not exists public.telegram_processed_updates (
     processed_at timestamptz not null default now()
 );
 
+create index if not exists telegram_processed_updates_processed_at_idx
+    on public.telegram_processed_updates (processed_at);
+
 alter table public.telegram_processed_updates enable row level security;
 revoke all on table public.telegram_processed_updates from anon, authenticated;
 grant select, insert, delete on table public.telegram_processed_updates to service_role;
@@ -16,6 +19,10 @@ security definer
 set search_path = public
 as $$
 begin
+    -- Keep only a rolling 30-day deduplication window.
+    delete from public.telegram_processed_updates
+    where processed_at < now() - interval '30 days';
+
     insert into public.telegram_processed_updates (update_id)
     values (p_update_id)
     on conflict (update_id) do nothing;
