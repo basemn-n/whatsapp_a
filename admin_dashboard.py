@@ -704,7 +704,7 @@ form.addEventListener("submit",async event=>{
 
             products_result = (
                 supabase.table("products")
-                .select("name, description, price, currency, model_number, category, stock_quantity, is_available")
+                .select("name, description, price, currency, model_number, category, image_url, stock_quantity, is_available")
                 .eq("business_id", business_id)
                 .eq("is_available", True)
                 .order("name")
@@ -732,6 +732,8 @@ form.addEventListener("submit",async event=>{
             detail = esc(product.get("description") or "")
             category = esc(product.get("category") or "")
             model = esc(product.get("model_number") or "")
+            image_url = esc(product.get("image_url") or "")
+            searchable = esc(" ".join(str(product.get(key) or "") for key in ("name", "description", "category", "model_number")))
             price = esc(product.get("price") if product.get("price") is not None else "السعر غير محدد")
             currency = esc(product.get("currency") or "YER")
             meta = []
@@ -739,8 +741,13 @@ form.addEventListener("submit",async event=>{
                 meta.append(f'<span class="tag">{category}</span>')
             if model:
                 meta.append(f'<span class="tag">الموديل: {model}</span>')
+            image_html = (
+                f'<img class="product-image" src="{image_url}" alt="{name}" loading="lazy" referrerpolicy="no-referrer">'
+                if image_url.startswith(("https://", "http://")) else ""
+            )
             cards.append(
-                '<article class="product">'
+                f'<article class="product" data-search="{searchable}">'
+                f'{image_html}'
                 f'<div class="product-top"><span class="dot"></span><span class="available">متاح للطلب</span></div>'
                 f'<h2>{name}</h2>'
                 f'<p class="description">{detail or "تواصل معنا لمعرفة تفاصيل المنتج."}</p>'
@@ -768,18 +775,35 @@ main{{padding:28px 0 54px}}.section-title{{display:flex;align-items:end;justify-
 .section-title h2{{font-size:22px;margin:0}}.count{{color:var(--muted);font-size:14px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:16px}}
 .product,.empty{{background:white;border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 4px 18px #0f172a08}}
-.product{{display:flex;flex-direction:column;min-height:260px}}.product-top{{display:flex;align-items:center;gap:7px;color:var(--accent);font-size:13px}}
+.product{{display:flex;flex-direction:column;min-height:260px;overflow:hidden}}.product-image{{width:100%;height:210px;object-fit:cover;border-radius:12px;background:#f1f5f9;margin-bottom:14px}}.product-top{{display:flex;align-items:center;gap:7px;color:var(--accent);font-size:13px}}
 .dot{{width:8px;height:8px;background:#16a34a;border-radius:50%}}.product h2{{font-size:19px;margin:12px 0 5px}}.description{{color:var(--muted);font-size:14px;white-space:pre-wrap;margin:0 0 12px}}
 .tags{{display:flex;flex-wrap:wrap;gap:6px}}.tag{{background:var(--soft);border-radius:7px;padding:3px 8px;color:#475569;font-size:12px}}
 .price{{font-size:23px;font-weight:700;margin:18px 0 14px}}.price small{{font-size:13px;color:var(--muted);font-weight:400}}
 .order{{margin-top:auto;display:block;text-align:center;text-decoration:none;background:var(--accent);color:white;border-radius:10px;padding:11px 12px;font-weight:700}}
 .order:hover{{background:#115e59}}footer{{border-top:1px solid var(--line);padding:20px;text-align:center;color:var(--muted);font-size:13px}}
-.empty{{grid-column:1/-1;text-align:center;padding:42px 20px}}.empty p{{color:var(--muted)}}
+.empty{{grid-column:1/-1;text-align:center;padding:42px 20px}}.empty p{{color:var(--muted)}}.store-search{{width:100%;max-width:520px;padding:13px 15px;border:1px solid var(--line);border-radius:12px;margin:0 0 18px;font:inherit}}.store-search:focus{{outline:3px solid #0f766e22;border-color:#0f766e}}.no-match{{display:none;grid-column:1/-1}}
 </style></head>
 <body>
 <header><div class="wrap"><div class="eyebrow">{industry or "المتجر الرسمي"}</div><h1>{store_name}</h1><p class="intro">{description or "تصفح المنتجات المتاحة وتواصل معنا للاستفسار أو تقديم طلب."}</p></div></header>
-<main class="wrap"><div class="section-title"><h2>المنتجات المتاحة</h2><span class="count">{len(products)} منتج</span></div><section class="grid">{product_html}</section></main>
+<main class="wrap"><div class="section-title"><h2>المنتجات المتاحة</h2><span class="count" id="productCount">{len(products)} منتج</span></div><input class="store-search" id="storeSearch" type="search" placeholder="ابحث باسم المنتج أو الموديل أو التصنيف..." aria-label="البحث في منتجات المتجر"><section class="grid" id="storeProductGrid">{product_html}<div class="empty no-match" id="noMatch"><h2>لا توجد نتائج مطابقة</h2><p>جرّب كلمة بحث أخرى أو رقم الموديل.</p></div></section></main>
 <footer>للاستفسار والطلب، استخدم رابط التواصل الموجود في بطاقة المنتج.</footer>
+<script>
+const searchInput=document.getElementById("storeSearch");
+const cards=[...document.querySelectorAll("#storeProductGrid .product")];
+const count=document.getElementById("productCount");
+const noMatch=document.getElementById("noMatch");
+searchInput.addEventListener("input",()=>{
+  const query=searchInput.value.trim().toLocaleLowerCase();
+  let visible=0;
+  for(const card of cards){
+    const match=(card.dataset.search||"").toLocaleLowerCase().includes(query);
+    card.hidden=!match;
+    if(match) visible++;
+  }
+  noMatch.style.display=visible===0?"block":"none";
+  count.textContent=visible.toLocaleString("ar")+" منتج";
+});
+</script>
 </body></html>"""
         return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
 
