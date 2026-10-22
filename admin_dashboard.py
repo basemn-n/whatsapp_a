@@ -1357,6 +1357,40 @@ function setMessage(text) {
   msg.textContent = text;
 }
 
+function clearOverviewForStoreSwitch() {
+  for (const id of ["overviewOrders", "overviewProducts", "overviewAttention", "overviewLowStockCount"]) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = "—";
+  }
+  const summary = document.getElementById("overviewProductSummary");
+  if (summary) summary.textContent = "جارٍ تحميل بيانات المتجر المحدد...";
+  const placeholders = [
+    ["overviewStockList", "جارٍ تحميل مخزون المتجر المحدد..."],
+    ["merchantSetupSteps", "جارٍ فحص إعدادات المتجر المحدد..."],
+    ["managerInsights", "جارٍ تحميل تحليلات المتجر المحدد..."]
+  ];
+  for (const [id, message] of placeholders) {
+    const list = document.getElementById(id);
+    if (!list) continue;
+    list.replaceChildren();
+    const note = document.createElement("div");
+    note.className = "empty-note";
+    note.textContent = message;
+    list.appendChild(note);
+  }
+  const recentRows = document.getElementById("overviewRecentOrders");
+  if (recentRows) {
+    recentRows.replaceChildren();
+    const tr = document.createElement("tr");
+    const td = cell("جارٍ تحميل طلبات المتجر المحدد...");
+    td.colSpan = 4;
+    tr.appendChild(td);
+    recentRows.appendChild(tr);
+  }
+  const managerAnswer = document.getElementById("managerAnswer");
+  if (managerAnswer) managerAnswer.textContent = "جارٍ تحميل بيانات المتجر المحدد...";
+}
+
 function clearPrivateDashboardData() {
   businesses = [];
   currentProducts = [];
@@ -2706,6 +2740,7 @@ document.getElementById("businessSelect")
   .addEventListener("change", () => {
     // Clear the previous tenant's data immediately; never leave it visible while
     // the newly selected tenant's requests are loading.
+    clearOverviewForStoreSwitch();
     currentProducts = [];
     allOrders = [];
     renderProducts();
