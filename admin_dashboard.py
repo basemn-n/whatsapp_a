@@ -1003,6 +1003,11 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>تظهر المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل بيانات المخزون.</div></div></section>
     <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">سجّل الدخول لعرض الطلبات.</td></tr></tbody></table></div></section>
   </div>
+  <section class="overview-card" id="merchantSetupCard">
+    <h3>ابدأ متجرك خلال دقائق</h3>
+    <p>أكمل الخطوات الأساسية ليكون متجرك جاهزًا لاستقبال العملاء. كل خطوة تحفظ بيانات هذا المتجر فقط.</p>
+    <div id="merchantSetupSteps" class="stock-list"><div class="empty-note">جارٍ فحص إعداد المتجر...</div></div>
+  </section>
   <section class="overview-card" id="managerAssistantCard">
     <h3>مدير المتجر الذكي</h3>
     <p>تنبيهات وتوصيات مبنية على بيانات متجرك الفعلية. الأرقام لا تتضمن تكلفة البضاعة أو المصاريف ما لم تُسجّل في النظام.</p>
@@ -1551,6 +1556,47 @@ function showTab(tab) {
   }
 }
 
+async function updateMerchantSetupChecklist(businessId, productCount) {
+  const list = document.getElementById("merchantSetupSteps");
+  if (!list) return;
+  list.replaceChildren();
+  if (!businessId) {
+    const empty = document.createElement("div"); empty.className = "empty-note";
+    empty.textContent = "أنشئ متجرًا أو اختر المتجر لبدء الإعداد."; list.appendChild(empty); return;
+  }
+  let profile = {}, settings = {};
+  try {
+    const [profileData, settingsData] = await Promise.all([
+      api("/api/admin/business-profile?business_id=" + encodeURIComponent(businessId)),
+      api("/api/admin/business-assistant-settings?business_id=" + encodeURIComponent(businessId))
+    ]);
+    if (document.getElementById("businessSelect").value !== businessId) return;
+    profile = profileData.business || {};
+    settings = settingsData.settings || {};
+  } catch (error) {
+    const empty = document.createElement("div"); empty.className = "empty-note";
+    empty.textContent = "تعذر فحص خطوات الإعداد. افتح إعدادات المتجر وحاول مجددًا.";
+    list.appendChild(empty); return;
+  }
+  const steps = [
+    {done: Boolean(String(profile.name || "").trim() && String(profile.industry || "").trim()), title:"بيانات المتجر", detail:"تأكد من اسم المتجر ومجال نشاطه.", action:"إعدادات المتجر", tab:"settings"},
+    {done: Boolean(String(settings.business_policies || "").trim() && String(settings.business_hours || "").trim()), title:"سياسات التوصيل والدفع وساعات العمل", detail:"اكتب السياسات وساعات العمل ليجيب المساعد بدقة.", action:"إكمال السياسات", tab:"settings"},
+    {done: productCount > 0, title:"إضافة الكتالوج", detail: productCount > 0 ? "تم تسجيل " + productCount.toLocaleString("ar") + " منتج في هذا المتجر." : "أضف المنتجات وأسعارها ومخزونها.", action:"إدارة المنتجات", tab:"products"},
+    {done: Boolean(businessId), title:"رابط مساعد العملاء", detail:"الرابط خاص بهذا المتجر ويظهر في قسم المنتجات.", action:"عرض رابط العملاء", tab:"products"}
+  ];
+  for (const step of steps) {
+    const item = document.createElement("div"); item.className = "stock-item";
+    const content = document.createElement("div"); content.style.flex = "1";
+    const title = document.createElement("strong"); title.textContent = (step.done ? "✓ " : "○ ") + step.title;
+    const detail = document.createElement("div"); detail.className = "overview-sub"; detail.textContent = step.detail;
+    content.append(title, detail);
+    const action = document.createElement("button"); action.type = "button"; action.className = step.done ? "secondary" : "";
+    action.textContent = step.done ? "مراجعة" : step.action;
+    action.onclick = () => showTab(step.tab);
+    item.append(content, action); list.appendChild(item);
+  }
+}
+
 async function askManagerAssistant(question) {
   try {
     if (!(await ensureLogin())) return;
@@ -1656,6 +1702,7 @@ async function loadOverview() {
     }
     renderOrders();
     renderProducts();
+    await updateMerchantSetupChecklist(businessId, currentProducts.length);
     await askManagerAssistant("");
     setMessage("تم تحديث النظرة العامة. تنبيهات المخزون تشمل المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.");
   } catch (error) {
