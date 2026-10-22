@@ -2934,8 +2934,8 @@ if (auth) {
         if not raw or len(raw) > 8 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="اختر صورة غير فارغة لا يتجاوز حجمها 8 ميجابايت.")
         signatures = {
-            "image/jpeg": raw.startswith(b"\\xff\\xd8\\xff"),
-            "image/png": raw.startswith(b"\\x89PNG\\r\\n\\x1a\\n"),
+            "image/jpeg": raw.startswith(b"\xff\xd8\xff"),
+            "image/png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
             "image/webp": len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP",
         }
         if content_type not in signatures or not signatures[content_type]:
