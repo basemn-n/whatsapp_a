@@ -1000,14 +1000,14 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     <div class="dashboard-tree-group">▾ إدارة المتجر</div>
     <button id="overviewTab" class="dashboard-tree-item active" onclick="showTab('overview')"><span>⌂</span> نظرة عامة</button>
     <div class="dashboard-tree-branch">
-      <button id="ordersTab" class="dashboard-tree-item" onclick="showTab('orders')"><span>├</span> الطلبات</button>
-      <button id="productsTab" class="dashboard-tree-item" onclick="showTab('products')"><span>├</span> المنتجات</button>
-      <button id="reportsTab" class="dashboard-tree-item" onclick="showTab('reports')"><span>└</span> تقارير المبيعات</button>
+      <button id="ordersTab" class="dashboard-tree-item" onclick="showTab('orders')"><span>📦</span> الطلبات</button>
+      <button id="productsTab" class="dashboard-tree-item" onclick="showTab('products')"><span>🛍️</span> المنتجات</button>
+      <button id="reportsTab" class="dashboard-tree-item" onclick="showTab('reports')"><span>📈</span> تقارير المبيعات</button>
     </div>
     <div class="dashboard-tree-group">▾ إعدادات وخدمات</div>
     <button id="settingsTab" class="dashboard-tree-item" onclick="showTab('settings')"><span>⚙</span> إعدادات المتجر والمساعد</button>
-    <button id="requestsTab" class="dashboard-tree-item hidden" onclick="showTab('requests')"><span>├</span> طلبات التجار</button>
-    <button id="aiUsageTab" class="dashboard-tree-item hidden" onclick="showTab('ai-usage')"><span>└</span> استخدام الذكاء الاصطناعي</button>
+    <button id="requestsTab" class="dashboard-tree-item hidden" onclick="showTab('requests')"><span>👥</span> طلبات التجار</button>
+    <button id="aiUsageTab" class="dashboard-tree-item hidden" onclick="showTab('ai-usage')"><span>🤖</span> استخدام الذكاء الاصطناعي</button>
     <div class="dashboard-tree-note">اختر قسمًا من القائمة لعرض بياناته وأدواته فقط.</div>
   </aside>
   <div class="dashboard-main">
@@ -1022,7 +1022,7 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
   <section class="overview-card" id="merchantSetupCard">
     <h3>ابدأ متجرك خلال دقائق</h3>
     <p>أكمل بيانات المتجر وسياسات البيع وأضف منتجاتك، ثم شارك رابط المساعد مع العملاء.</p>
-    <div id="merchantSetupSteps" class="stock-list"><div class="empty-note">سجّل الدخول لفحص جاهزية متجرك.</div></div>
+    <div id="merchantSetupSteps" class="stock-list"><div class="empty-note">جارٍ فحص جاهزية متجرك...</div></div>
   </section>
 
   <div class="overview-section-title"><div><h3>ملخص الأداء</h3><p>الأرقام تخص المتجر المحدد فقط.</p></div></div>
@@ -1035,14 +1035,14 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 
   <div class="overview-section-title"><div><h3>متابعة المتجر</h3><p>راجع ما يحتاج إجراءً الآن وآخر الطلبات الواردة.</p></div></div>
   <div class="overview-grid">
-    <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل بيانات المخزون.</div></div></section>
-    <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">سجّل الدخول لعرض الطلبات.</td></tr></tbody></table></div></section>
+    <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">جارٍ تحميل بيانات المخزون...</div></div></section>
+    <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">جارٍ تحميل أحدث الطلبات...</td></tr></tbody></table></div></section>
   </div>
 
   <section class="overview-card" id="managerAssistantCard">
     <h3>مدير المتجر الذكي</h3>
     <p>تنبيهات وتوصيات مبنية على بيانات متجرك الفعلية. المبيعات ليست صافي ربح؛ حساب الربح يحتاج تكلفة البضاعة والمصاريف.</p>
-    <div id="managerInsights" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل التحليلات.</div></div>
+    <div id="managerInsights" class="stock-list"><div class="empty-note">جارٍ تحميل تحليلات المتجر...</div></div>
     <form id="managerQuestionForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
       <input id="managerQuestion" type="text" maxlength="1000" placeholder="مثال: كم مبيعات الطلبات المسلّمة هذا الأسبوع؟" style="flex:1;min-width:220px">
       <button type="submit">اسأل مدير المتجر</button>
