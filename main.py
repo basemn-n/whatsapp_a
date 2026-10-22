@@ -1061,6 +1061,49 @@ def finish_telegram_update(update_id):
             telegram_updates_processed.discard(oldest)
 
 
+def abandon_telegram_update(update_id):
+    """Release an in-process claim after a failed update so Telegram can retry."""
+    if update_id is None:
+        return
+    with telegram_update_lock:
+        telegram_updates_in_progress.discard(str(update_id))
+
+
+def claim_telegram_update_durable(update_id):
+    """Atomically claim a Telegram update in Supabase; None means fallback unavailable."""
+    if supabase is None or update_id is None:
+        return None
+    try:
+        result = supabase.rpc(
+            "claim_telegram_update",
+            {"p_update_id": int(update_id)},
+        ).execute()
+        data = result.data
+        if isinstance(data, bool):
+            return data
+        if isinstance(data, list) and data and isinstance(data[0], bool):
+            return data[0]
+        logger.warning("Telegram durable deduplication returned an unexpected response.")
+    except Exception:
+        logger.exception(
+            "Durable Telegram deduplication unavailable; using the in-process cache."
+        )
+    return None
+
+
+def release_telegram_update_durable(update_id):
+    """Remove a durable claim after processing fails, allowing webhook retry."""
+    if supabase is None or update_id is None:
+        return
+    try:
+        supabase.rpc(
+            "release_telegram_update",
+            {"p_update_id": int(update_id)},
+        ).execute()
+    except Exception:
+        logger.exception("Could not release failed Telegram update claim.")
+
+
 def download_telegram_photo(file_id: str):
     """Download and validate a Telegram photo, with a 10 MB processing limit."""
     if not TELEGRAM_BOT_TOKEN or not file_id:
@@ -1528,13 +1571,24 @@ async def receive_telegram_webhook(request: Request):
         logger.info("Ignoring duplicate Telegram update (update_id=%s).", update_id)
         return {"ok": True, "duplicate": True}
 
+    durable_claim = await asyncio.to_thread(
+        claim_telegram_update_durable, update_id
+    )
+    if durable_claim is False:
+        finish_telegram_update(update_id)
+        logger.info("Ignoring durable duplicate Telegram update (update_id=%s).", update_id)
+        return {"ok": True, "duplicate": True}
+
     try:
         await process_telegram_update(update)
     except Exception:
-        logger.exception("Failed to process Telegram webhook update.")
-    finally:
-        finish_telegram_update(update_id)
+        logger.exception("Failed to process Telegram webhook update; allowing retry.")
+        if durable_claim is True:
+            await asyncio.to_thread(release_telegram_update_durable, update_id)
+        abandon_telegram_update(update_id)
+        raise HTTPException(status_code=500, detail="Telegram update processing failed.")
 
+    finish_telegram_update(update_id)
     return {"ok": True}
 
 
