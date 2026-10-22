@@ -947,12 +947,33 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 .dashboard-tree-branch{border-right:1px solid #dce4f2;margin:2px 13px 8px 0;padding-right:9px}
 .dashboard-tree-note{font-size:12px;line-height:1.8;color:var(--muted);border-top:1px solid var(--line);margin-top:14px;padding:12px 8px 3px}
 .dashboard-main{min-width:0}
-.dashboard-main>#msg{margin-bottom:12px}
+.dashboard-main>#msg{margin:0 0 14px}
+.dashboard-main>#msg:empty{display:none}
 .dashboard-main>.panel,.dashboard-main>section:not(#msg){min-width:0}
 .dashboard-main .wrap{max-width:100%}
 .dashboard-main table{width:100%}
+.dashboard-tree-item span{font-family:"Segoe UI",Tahoma,Arial,sans-serif;font-size:16px}
+.overview-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:0 0 18px;padding:5px 2px}
+.overview-heading h3{font-size:25px;margin:0 0 4px}
+.overview-heading p{margin:0;max-width:650px}
+.overview-kicker{font-size:12px;font-weight:800;color:var(--brand);margin-bottom:4px}
+.overview-section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:24px 0 10px}
+.overview-section-title h3{font-size:18px;margin:0}
+.overview-section-title p{font-size:13px;margin:2px 0 0}
+.overview-grid{margin:0 0 14px;gap:14px}
+.overview-card{padding:19px}
+.overview-card p{margin:5px 0 12px}
+.overview-card .quick-actions{margin-top:12px}
+.overview-number{font-size:32px}
+.overview-card#merchantSetupCard{margin:0 0 20px;border-color:#d9e3ff;background:linear-gradient(135deg,#fff 0%,#f6f8ff 100%)}
+#merchantSetupCard h3,#managerAssistantCard h3{font-size:19px}
+#merchantSetupSteps .stock-item{background:#fff}
+#managerAssistantCard{margin-top:18px}
+#managerQuestionForm button{white-space:nowrap}
+.dashboard-main .empty-note{line-height:1.8}
+.quick-actions button{min-height:42px}
 @media(max-width:900px){.dashboard-layout{grid-template-columns:210px minmax(0,1fr);gap:12px}.dashboard-tree{padding:10px}}
-@media(max-width:700px){.dashboard-layout{grid-template-columns:1fr}.dashboard-tree{position:static;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.dashboard-tree-title,.dashboard-tree-group,.dashboard-tree-note{grid-column:1/-1}.dashboard-tree-item{margin:0;padding:10px 8px;font-size:13px}.dashboard-tree-branch{display:contents}.dashboard-main{min-width:0}}
+@media(max-width:700px){.dashboard-layout{grid-template-columns:1fr}.dashboard-tree{position:static;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.dashboard-tree-title,.dashboard-tree-group,.dashboard-tree-note{grid-column:1/-1}.dashboard-tree-item{margin:0;padding:10px 8px;font-size:13px}.dashboard-tree-branch{display:contents}.dashboard-main{min-width:0}.overview-heading{align-items:flex-start;flex-direction:column}.overview-heading h3{font-size:22px}}
 
 @media(max-width:560px){body{padding:8px}.page-head{border-radius:16px;flex-direction:column}.brand-icon{width:45px;height:45px}.tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.tabs button{padding:10px 5px;font-size:13px}.grid{grid-template-columns:1fr}.full{grid-column:auto}.panel{padding:14px;border-radius:14px}.stats{gap:8px}.stat-card{padding:13px}.toolbar select{width:100%}.search-box{min-width:100%}.login-card{padding:22px}}
 </style>
@@ -993,32 +1014,46 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     <div id="msg" role="status">أهلًا بك. سجّل الدخول لعرض بيانات متجرك.</div>
 
 <section id="overviewPanel">
-  <div class="overview-grid">
-    <article class="overview-card"><h3>الطلبات</h3><div class="overview-number" id="overviewOrders">—</div><div class="overview-sub">إجمالي الطلبات في المتجر المحدد</div><div class="quick-actions"><button type="button" onclick="showTab('orders')">إدارة الطلبات</button></div></article>
-    <article class="overview-card"><h3>المنتجات</h3><div class="overview-number" id="overviewProducts">—</div><div class="overview-sub" id="overviewProductSummary">المنتجات المسجلة في متجرك</div><div class="quick-actions"><button type="button" onclick="showTab('products')">إدارة المنتجات</button></div></article>
-    <article class="overview-card"><h3>طلبات تحتاج متابعة</h3><div class="overview-number" id="overviewAttention">—</div><div class="overview-sub">قيد المراجعة أو التجهيز</div><div class="quick-actions"><button type="button" class="secondary" onclick="showTab('orders')">متابعة الطلبات</button></div></article>
-    <article class="overview-card"><h3>تنبيهات المخزون</h3><div class="overview-number" id="overviewLowStockCount">—</div><div class="overview-sub">منتجات نفد مخزونها أو اقترب من النفاد</div><div class="quick-actions"><button type="button" class="secondary" onclick="showTab('products')">مراجعة المخزون</button></div></article>
+  <div class="overview-heading">
+    <div><div class="overview-kicker">مساحة العمل</div><h3>نظرة عامة على متجرك</h3><p>ملخص واضح للطلبات والمنتجات والمخزون، مع أدوات مباشرة لإدارة يومك.</p></div>
+    <button type="button" class="secondary" onclick="loadOverview()">↻ تحديث البيانات</button>
   </div>
-  <div class="overview-grid">
-    <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>تظهر المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل بيانات المخزون.</div></div></section>
-    <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">سجّل الدخول لعرض الطلبات.</td></tr></tbody></table></div></section>
-  </div>
+
   <section class="overview-card" id="merchantSetupCard">
     <h3>ابدأ متجرك خلال دقائق</h3>
-    <p>أكمل الخطوات الأساسية ليكون متجرك جاهزًا لاستقبال العملاء. كل خطوة تحفظ بيانات هذا المتجر فقط.</p>
-    <div id="merchantSetupSteps" class="stock-list"><div class="empty-note">جارٍ فحص إعداد المتجر...</div></div>
+    <p>أكمل بيانات المتجر وسياسات البيع وأضف منتجاتك، ثم شارك رابط المساعد مع العملاء.</p>
+    <div id="merchantSetupSteps" class="stock-list"><div class="empty-note">سجّل الدخول لفحص جاهزية متجرك.</div></div>
   </section>
+
+  <div class="overview-section-title"><div><h3>ملخص الأداء</h3><p>الأرقام تخص المتجر المحدد فقط.</p></div></div>
+  <div class="overview-grid">
+    <article class="overview-card"><h3>إجمالي الطلبات</h3><div class="overview-number" id="overviewOrders">—</div><div class="overview-sub">جميع الطلبات المسجلة</div><div class="quick-actions"><button type="button" onclick="showTab('orders')">عرض الطلبات</button></div></article>
+    <article class="overview-card"><h3>المنتجات</h3><div class="overview-number" id="overviewProducts">—</div><div class="overview-sub" id="overviewProductSummary">المنتجات المسجلة في متجرك</div><div class="quick-actions"><button type="button" onclick="showTab('products')">إدارة المنتجات</button></div></article>
+    <article class="overview-card"><h3>تحتاج متابعة</h3><div class="overview-number" id="overviewAttention">—</div><div class="overview-sub">طلبات قيد المراجعة أو التجهيز</div><div class="quick-actions"><button type="button" class="secondary" onclick="showTab('orders')">متابعة الطلبات</button></div></article>
+    <article class="overview-card"><h3>تنبيهات المخزون</h3><div class="overview-number" id="overviewLowStockCount">—</div><div class="overview-sub">منتجات نفدت أو قاربت على النفاد</div><div class="quick-actions"><button type="button" class="secondary" onclick="showTab('products')">مراجعة المخزون</button></div></article>
+  </div>
+
+  <div class="overview-section-title"><div><h3>متابعة المتجر</h3><p>راجع ما يحتاج إجراءً الآن وآخر الطلبات الواردة.</p></div></div>
+  <div class="overview-grid">
+    <section class="overview-card"><h3>مخزون يحتاج انتباهًا</h3><p>المنتجات غير المتاحة أو التي بقي منها 3 قطع أو أقل.</p><div id="overviewStockList" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل بيانات المخزون.</div></div></section>
+    <section class="overview-card"><h3>أحدث الطلبات</h3><p>آخر الطلبات المسجلة لهذا المتجر.</p><div class="wrap"><table class="overview-table"><thead><tr><th>رقم الطلب</th><th>المنتج</th><th>الحالة</th><th>الكمية</th></tr></thead><tbody id="overviewRecentOrders"><tr><td colspan="4">سجّل الدخول لعرض الطلبات.</td></tr></tbody></table></div></section>
+  </div>
+
   <section class="overview-card" id="managerAssistantCard">
     <h3>مدير المتجر الذكي</h3>
-    <p>تنبيهات وتوصيات مبنية على بيانات متجرك الفعلية. الأرقام لا تتضمن تكلفة البضاعة أو المصاريف ما لم تُسجّل في النظام.</p>
-    <div id="managerInsights" class="stock-list"><div class="empty-note">جارٍ تحميل التحليلات...</div></div>
+    <p>تنبيهات وتوصيات مبنية على بيانات متجرك الفعلية. المبيعات ليست صافي ربح؛ حساب الربح يحتاج تكلفة البضاعة والمصاريف.</p>
+    <div id="managerInsights" class="stock-list"><div class="empty-note">سجّل الدخول لتحميل التحليلات.</div></div>
     <form id="managerQuestionForm" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-      <input id="managerQuestion" type="text" maxlength="1000" placeholder="مثال: كم بلغت مبيعات الطلبات المسلّمة هذا الأسبوع؟" style="flex:1;min-width:220px">
+      <input id="managerQuestion" type="text" maxlength="1000" placeholder="مثال: كم مبيعات الطلبات المسلّمة هذا الأسبوع؟" style="flex:1;min-width:220px">
       <button type="submit">اسأل مدير المتجر</button>
     </form>
-    <div id="managerAnswer" class="empty-note" role="status" style="margin-top:12px;white-space:pre-wrap">اسأل عن المبيعات أو الطلبات أو المنتجات التي تحتاج متابعة.</div>
+    <div id="managerAnswer" class="empty-note" role="status" style="margin-top:12px;white-space:pre-wrap">اكتب سؤالك عن المبيعات أو الطلبات أو المخزون.</div>
   </section>
-  <div class="overview-card"><h3>إجراءات سريعة</h3><p>انتقل مباشرة إلى أكثر المهام استخدامًا.</p><div class="quick-actions"><button type="button" onclick="showTab('products')">＋ إضافة منتج</button><button type="button" class="secondary" onclick="showTab('reports')">عرض تقارير المبيعات</button><button type="button" class="secondary" onclick="loadOverview()">↻ تحديث النظرة العامة</button></div></div>
+
+  <section class="overview-card">
+    <h3>إجراءات سريعة</h3><p>اختصارات للمهام اليومية الأكثر استخدامًا.</p>
+    <div class="quick-actions"><button type="button" onclick="showTab('products')">＋ إضافة منتج</button><button type="button" class="secondary" onclick="showTab('reports')">عرض تقارير المبيعات</button><button type="button" class="secondary" onclick="showTab('settings')">إعدادات المتجر</button></div>
+  </section>
 </section>
 
 <section id="ordersPanel" class="panel hidden">
@@ -2079,7 +2114,7 @@ async function loadReports() {
       "تقدير الطلبات الملغاة القديمة حسب السعر الحالي: " + formatMoneyGroups(data.cancelled_estimated_value);
     document.getElementById("cancelledMissingValue").textContent =
       "طلبات ملغاة بلا سعر يمكن حسابه: " + (data.cancelled_missing_price_orders ?? 0);
-    setMessage("تم تحديث تقرير المبيعات.");
+    setMessage("");
   } catch (error) {
     setMessage(error.message);
   } finally {
