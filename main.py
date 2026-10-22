@@ -10,6 +10,8 @@ import requests
 import tempfile
 import uuid
 import threading
+import time
+import httpx
 from urllib.parse import urlparse
 
 from contextlib import asynccontextmanager
@@ -49,11 +51,30 @@ supabase = None
 
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     try:
-        from supabase import create_client
+        from supabase import ClientOptions, create_client
 
+        class SupabaseReadRetryClient(httpx.Client):
+            """Avoid flaky HTTP/2 reads; retry safe read requests only."""
+
+            def send(self, request, **kwargs):
+                attempts = 3 if request.method in {"GET", "HEAD"} else 1
+                for attempt in range(attempts):
+                    try:
+                        return super().send(request, **kwargs)
+                    except (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError):
+                        if attempt + 1 >= attempts:
+                            raise
+                        time.sleep(0.5 * (attempt + 1))
+
+        supabase_http_client = SupabaseReadRetryClient(
+            http2=False,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            follow_redirects=True,
+        )
         supabase = create_client(
             SUPABASE_URL,
             SUPABASE_SERVICE_ROLE_KEY,
+            options=ClientOptions(httpx_client=supabase_http_client),
         )
         logger.info("Supabase client initialized.")
     except Exception:
