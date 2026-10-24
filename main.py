@@ -1514,12 +1514,7 @@ async def process_telegram_update(update: dict):
                 business_id,
             )
 
-        await asyncio.to_thread(
-            send_telegram_message,
-            chat_id,
-            reply_text,
-            reply_to,
-        )
+        await send_telegram_message(chat_id, reply_text)
         return
 
     # Private chat: bind the customer to the store from the bot deep-link,
