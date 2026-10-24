@@ -7,6 +7,7 @@ import secrets
 import base64
 import json
 import time
+from datetime import datetime, timedelta, timezone
 import csv
 import io
 from decimal import Decimal
@@ -43,6 +44,31 @@ class MerchantSignup(BaseModel):
 class SignupReview(BaseModel):
     action: str
     reason: str = Field(default="", max_length=500)
+
+
+class StoreGrowthSettingsUpdate(BaseModel):
+    business_id: str
+    shopping_advisor_enabled: bool = True
+    followups_enabled: bool = True
+    followup_delay_hours: int = Field(default=24, ge=1, le=168)
+    loyalty_enabled: bool = True
+    points_per_1000: float = Field(default=1, ge=0, le=100000)
+    point_value_yer: float = Field(default=1, gt=0, le=100000)
+    minimum_redeem_points: int = Field(default=20, ge=1, le=100000000)
+    repeat_purchase_threshold: int = Field(default=3, ge=2, le=100)
+    repeat_purchase_bonus_points: int = Field(default=10, ge=0, le=100000000)
+    coupon_expiry_days: int = Field(default=30, ge=1, le=365)
+
+
+class StoreCouponCreate(BaseModel):
+    business_id: str
+    code: str = Field(min_length=3, max_length=40)
+    title: str = Field(default="مكافأة الولاء", min_length=2, max_length=120)
+    points_cost: int = Field(gt=0, le=100000000)
+    discount_amount: float = Field(gt=0, le=100000000)
+    currency: str = Field(default="YER", min_length=3, max_length=3)
+    expiry_days: int = Field(default=30, ge=1, le=365)
+    max_redemptions: int | None = Field(default=None, ge=1, le=100000000)
 
 
 def _merchant_session_secret():
@@ -1051,6 +1077,7 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     </div>
     <div class="dashboard-tree-group">▾ إعدادات وخدمات</div>
     <button id="settingsTab" class="dashboard-tree-item" onclick="showTab('settings')"><span>⚙</span> إعدادات المتجر والمساعد</button>
+    <button id="growthTab" class="dashboard-tree-item" onclick="showTab('growth')"><span>🎁</span> مستشار الشراء والولاء</button>
     <button id="requestsTab" class="dashboard-tree-item hidden" onclick="showTab('requests')"><span>👥</span> طلبات التجار</button>
     <button id="aiUsageTab" class="dashboard-tree-item hidden" onclick="showTab('ai-usage')"><span>🤖</span> استخدام الذكاء الاصطناعي</button>
     <div class="dashboard-tree-note">اختر قسمًا من القائمة لعرض بياناته وأدواته فقط.</div>
@@ -1327,6 +1354,44 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <p id="cancelledEstimatedValue">تقدير الطلبات الملغاة القديمة: —</p>
 <p id="cancelledMissingValue">طلبات ملغاة بلا سعر يمكن حسابه: —</p>
 </div>
+</section>
+
+<section id="growthPanel" class="panel hidden">
+  <h3>مستشار الشراء واستعادة العملاء والولاء</h3>
+  <p>كل إعداد هنا يخص المتجر المحدد فقط. التذكيرات لا تُرسل إلا بعد موافقة العميل، ومرة واحدة لكل استفسار غير مكتمل. تُضاف نقاط الولاء عند تسليم الطلب فقط.</p>
+  <form id="storeGrowthSettingsForm">
+    <div class="grid">
+      <div><label><input id="growthAdvisorEnabled" type="checkbox" style="width:auto"> تفعيل مستشار الشراء الذكي</label><small>يقارن المنتجات المسجلة فقط ويطلب توضيحًا عند الحاجة.</small></div>
+      <div><label><input id="growthFollowupsEnabled" type="checkbox" style="width:auto"> تفعيل تذكيرات العملاء</label><small>لا يعمل دون موافقة العميل الصريحة.</small></div>
+      <div><label for="growthFollowupDelay">مدة الانتظار قبل التذكير (ساعة)</label><input id="growthFollowupDelay" type="number" min="1" max="168" required></div>
+      <div><label><input id="growthLoyaltyEnabled" type="checkbox" style="width:auto"> تفعيل برنامج الولاء</label><small>تُحتسب النقاط للطلبات المسلّمة فقط.</small></div>
+      <div><label for="growthPointsRate">النقاط لكل 1000 من قيمة الطلب</label><input id="growthPointsRate" type="number" min="0" max="100000" step="0.1" required></div>
+      <div><label for="growthPointValue">القيمة الحسابية للنقطة</label><input id="growthPointValue" type="number" min="0.0001" step="0.01" required></div>
+      <div><label for="growthMinimumPoints">الحد الأدنى لاستبدال النقاط</label><input id="growthMinimumPoints" type="number" min="1" required></div>
+      <div><label for="growthRepeatThreshold">عدد الطلبات المسلّمة للحصول على مكافأة التكرار</label><input id="growthRepeatThreshold" type="number" min="2" max="100" required></div>
+      <div><label for="growthRepeatBonus">نقاط إضافية للعميل المتكرر</label><input id="growthRepeatBonus" type="number" min="0" required></div>
+      <div><label for="growthCouponExpiry">مدة انتهاء المكافأة الافتراضية (يوم)</label><input id="growthCouponExpiry" type="number" min="1" max="365" required></div>
+    </div>
+    <div class="form-actions"><button type="submit">حفظ إعدادات الميزات</button><button type="button" class="secondary" onclick="loadStoreGrowth()">إعادة تحميل</button></div>
+  </form>
+  <hr>
+  <h3>إنشاء كوبون مكافأة</h3>
+  <p>حدد تكلفة النقاط وقيمة الخصم ومدة الصلاحية. رمز الكوبون فريد داخل هذا المتجر ولا يمكن استخدامه بعد انتهاء صلاحيته أو بلوغ حد الاستخدام.</p>
+  <form id="storeCouponForm">
+    <div class="grid">
+      <div><label for="couponCode">رمز المكافأة</label><input id="couponCode" required minlength="3" maxlength="40" pattern="[A-Za-z0-9_-]+" placeholder="LOYAL100"></div>
+      <div><label for="couponTitle">اسم المكافأة</label><input id="couponTitle" required minlength="2" maxlength="120" value="مكافأة الولاء"></div>
+      <div><label for="couponPointsCost">النقاط المطلوبة</label><input id="couponPointsCost" type="number" min="1" required></div>
+      <div><label for="couponDiscount">قيمة الخصم</label><input id="couponDiscount" type="number" min="0.01" step="0.01" required></div>
+      <div><label for="couponCurrency">العملة</label><select id="couponCurrency"><option value="YER">ريال يمني (YER)</option><option value="SAR">ريال سعودي (SAR)</option><option value="USD">دولار أمريكي (USD)</option><option value="AED">درهم إماراتي (AED)</option><option value="EGP">جنيه مصري (EGP)</option></select></div>
+      <div><label for="couponExpiryDays">الصلاحية (يوم)</label><input id="couponExpiryDays" type="number" min="1" max="365" required value="30"></div>
+      <div><label for="couponMaxRedemptions">أقصى عدد استخدامات (اختياري)</label><input id="couponMaxRedemptions" type="number" min="1" placeholder="اتركه فارغًا بلا حد"></div>
+    </div>
+    <div class="form-actions"><button type="submit">إنشاء المكافأة</button></div>
+  </form>
+  <h3 style="margin-top:24px">مكافآت هذا المتجر</h3>
+  <div class="toolbar"><button type="button" class="secondary" onclick="loadStoreCoupons()">تحديث المكافآت</button></div>
+  <div class="wrap"><table style="min-width:780px"><thead><tr><th>الرمز</th><th>المكافأة</th><th>النقاط</th><th>الخصم</th><th>الاستخدام</th><th>تنتهي</th><th>الحالة</th></tr></thead><tbody id="storeCouponRows"><tr><td colspan="7">سجّل الدخول لعرض المكافآت.</td></tr></tbody></table></div>
 </section>
 
 <section id="aiUsagePanel" class="panel hidden">
@@ -1631,6 +1696,8 @@ function showTab(tab) {
     .classList.toggle("hidden", tab !== "reports");
   document.getElementById("settingsPanel")
     .classList.toggle("hidden", tab !== "settings");
+  document.getElementById("growthPanel")
+    .classList.toggle("hidden", tab !== "growth");
   document.getElementById("requestsPanel")
     .classList.toggle("hidden", tab !== "requests");
   document.getElementById("aiUsagePanel")
@@ -1648,6 +1715,8 @@ function showTab(tab) {
     .classList.toggle("active", tab === "reports");
   document.getElementById("settingsTab")
     .classList.toggle("active", tab === "settings");
+  document.getElementById("growthTab")
+    .classList.toggle("active", tab === "growth");
   document.getElementById("requestsTab")
     .classList.toggle("active", tab === "requests");
   document.getElementById("aiUsageTab")
@@ -1665,10 +1734,113 @@ function showTab(tab) {
     loadReports();
   } else if (tab === "settings") {
     loadBusinessProfile();
+  } else if (tab === "growth") {
+    loadStoreGrowth();
+    loadStoreCoupons();
   } else {
     loadOrders();
   }
 }
+
+async function loadStoreGrowth() {
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) return;
+  try {
+    const data = await api("/api/admin/store-growth-settings?business_id=" + encodeURIComponent(businessId));
+    const s = data.settings || {};
+    document.getElementById("growthAdvisorEnabled").checked = Boolean(s.shopping_advisor_enabled);
+    document.getElementById("growthFollowupsEnabled").checked = Boolean(s.followups_enabled);
+    document.getElementById("growthFollowupDelay").value = s.followup_delay_hours ?? 24;
+    document.getElementById("growthLoyaltyEnabled").checked = Boolean(s.loyalty_enabled);
+    document.getElementById("growthPointsRate").value = s.points_per_1000 ?? 1;
+    document.getElementById("growthPointValue").value = s.point_value_yer ?? 1;
+    document.getElementById("growthMinimumPoints").value = s.minimum_redeem_points ?? 20;
+    document.getElementById("growthRepeatThreshold").value = s.repeat_purchase_threshold ?? 3;
+    document.getElementById("growthRepeatBonus").value = s.repeat_purchase_bonus_points ?? 10;
+    document.getElementById("growthCouponExpiry").value = s.coupon_expiry_days ?? 30;
+    document.getElementById("couponExpiryDays").value = s.coupon_expiry_days ?? 30;
+  } catch (error) {
+    setMessage(error.message || "تعذر تحميل إعدادات الميزات.");
+  }
+}
+
+document.getElementById("storeGrowthSettingsForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) return;
+  const payload = {
+    business_id: businessId,
+    shopping_advisor_enabled: document.getElementById("growthAdvisorEnabled").checked,
+    followups_enabled: document.getElementById("growthFollowupsEnabled").checked,
+    followup_delay_hours: Number(document.getElementById("growthFollowupDelay").value),
+    loyalty_enabled: document.getElementById("growthLoyaltyEnabled").checked,
+    points_per_1000: Number(document.getElementById("growthPointsRate").value),
+    point_value_yer: Number(document.getElementById("growthPointValue").value),
+    minimum_redeem_points: Number(document.getElementById("growthMinimumPoints").value),
+    repeat_purchase_threshold: Number(document.getElementById("growthRepeatThreshold").value),
+    repeat_purchase_bonus_points: Number(document.getElementById("growthRepeatBonus").value),
+    coupon_expiry_days: Number(document.getElementById("growthCouponExpiry").value)
+  };
+  try {
+    await api("/api/admin/store-growth-settings", {method:"PATCH", body:JSON.stringify(payload)});
+    setMessage("تم حفظ إعدادات مستشار الشراء والتذكيرات والولاء لهذا المتجر.");
+    await loadStoreGrowth();
+  } catch (error) {
+    setMessage(error.message || "تعذر حفظ الإعدادات.");
+  }
+});
+
+async function loadStoreCoupons() {
+  const businessId = document.getElementById("businessSelect").value;
+  const tbody = document.getElementById("storeCouponRows");
+  if (!businessId || !tbody) return;
+  tbody.replaceChildren();
+  try {
+    const data = await api("/api/admin/store-coupons?business_id=" + encodeURIComponent(businessId));
+    const coupons = data.coupons || [];
+    if (!coupons.length) {
+      const row = document.createElement("tr"); const td = cell("لا توجد مكافآت منشأة لهذا المتجر بعد."); td.colSpan = 7; row.appendChild(td); tbody.appendChild(row); return;
+    }
+    for (const coupon of coupons) {
+      const row = document.createElement("tr");
+      row.appendChild(cell(coupon.code));
+      row.appendChild(cell(coupon.title));
+      row.appendChild(cell(coupon.points_cost));
+      row.appendChild(cell(String(coupon.discount_amount) + " " + coupon.currency));
+      row.appendChild(cell(String(coupon.redemption_count || 0) + (coupon.max_redemptions ? " / " + coupon.max_redemptions : " / بلا حد")));
+      row.appendChild(cell(coupon.expires_at ? new Date(coupon.expires_at).toLocaleDateString("ar") : "—"));
+      row.appendChild(cell(coupon.is_active && new Date(coupon.expires_at) > new Date() ? "فعالة" : "منتهية/متوقفة"));
+      tbody.appendChild(row);
+    }
+  } catch (error) {
+    const row = document.createElement("tr"); const td = cell(error.message || "تعذر تحميل المكافآت."); td.colSpan = 7; row.appendChild(td); tbody.appendChild(row);
+  }
+}
+
+document.getElementById("storeCouponForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) return;
+  const maxRaw = document.getElementById("couponMaxRedemptions").value.trim();
+  const payload = {
+    business_id: businessId,
+    code: document.getElementById("couponCode").value.trim(),
+    title: document.getElementById("couponTitle").value.trim(),
+    points_cost: Number(document.getElementById("couponPointsCost").value),
+    discount_amount: Number(document.getElementById("couponDiscount").value),
+    currency: document.getElementById("couponCurrency").value,
+    expiry_days: Number(document.getElementById("couponExpiryDays").value),
+    max_redemptions: maxRaw ? Number(maxRaw) : null
+  };
+  try {
+    await api("/api/admin/store-coupons", {method:"POST", body:JSON.stringify(payload)});
+    setMessage("تم إنشاء مكافأة الولاء لهذا المتجر.");
+    document.getElementById("storeCouponForm").reset();
+    await loadStoreCoupons();
+  } catch (error) {
+    setMessage(error.message || "تعذر إنشاء المكافأة.");
+  }
+});
 
 async function updateMerchantSetupChecklist(businessId, productCount) {
   const list = document.getElementById("merchantSetupSteps");
@@ -3048,6 +3220,153 @@ if (auth) {
                 status_code=503,
                 detail="تعذر حفظ تعليمات المساعد. تأكد من تنفيذ ملف ترحيل business_settings في Supabase.",
             )
+
+    @router.get("/api/admin/store-growth-settings")
+    def get_store_growth_settings_route(
+        business_id: str,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _actor)
+        get_business_or_404(business_id)
+        defaults = {
+            "business_id": business_id,
+            "shopping_advisor_enabled": True,
+            "followups_enabled": True,
+            "followup_delay_hours": 24,
+            "loyalty_enabled": True,
+            "points_per_1000": 1,
+            "point_value_yer": 1,
+            "minimum_redeem_points": 20,
+            "repeat_purchase_threshold": 3,
+            "repeat_purchase_bonus_points": 10,
+            "coupon_expiry_days": 30,
+        }
+        try:
+            result = (
+                supabase.table("store_growth_settings")
+                .select("business_id,shopping_advisor_enabled,followups_enabled,followup_delay_hours,loyalty_enabled,points_per_1000,point_value_yer,minimum_redeem_points,repeat_purchase_threshold,repeat_purchase_bonus_points,coupon_expiry_days,updated_at")
+                .eq("business_id", business_id)
+                .limit(1)
+                .execute()
+            )
+            return {"settings": {**defaults, **(result.data[0] if result.data else {})}}
+        except Exception:
+            logger.exception("تعذر تحميل إعدادات النمو والولاء.")
+            raise HTTPException(status_code=503, detail="نفّذ ترحيل store_growth_features في Supabase ثم أعد المحاولة.")
+
+    @router.patch("/api/admin/store-growth-settings")
+    def update_store_growth_settings_route(
+        payload: StoreGrowthSettingsUpdate,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _actor)
+        get_business_or_404(payload.business_id)
+        values = payload.model_dump()
+        values["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            supabase.table("store_growth_settings").upsert(
+                values, on_conflict="business_id"
+            ).execute()
+            saved = (
+                supabase.table("store_growth_settings")
+                .select("*")
+                .eq("business_id", payload.business_id)
+                .limit(1)
+                .execute()
+            )
+            if not saved.data:
+                raise HTTPException(status_code=500, detail="لم يتم تأكيد حفظ الإعدادات.")
+            return {"success": True, "settings": saved.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر حفظ إعدادات النمو والولاء.")
+            raise HTTPException(status_code=503, detail="تعذر حفظ الإعدادات. تأكد من تطبيق ترحيل store_growth_features.")
+
+    @router.get("/api/admin/store-coupons")
+    def list_store_coupons(
+        business_id: str,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _actor)
+        get_business_or_404(business_id)
+        try:
+            result = (
+                supabase.table("store_coupons")
+                .select("id,business_id,code,title,points_cost,discount_amount,currency,expires_at,max_redemptions,redemption_count,is_active,created_at")
+                .eq("business_id", business_id)
+                .order("created_at", desc=True)
+                .limit(100)
+                .execute()
+            )
+            return {"coupons": result.data or []}
+        except Exception:
+            logger.exception("تعذر تحميل كوبونات المتجر.")
+            raise HTTPException(status_code=503, detail="نفّذ ترحيل store_growth_features في Supabase ثم أعد المحاولة.")
+
+    @router.post("/api/admin/store-coupons")
+    def create_store_coupon(
+        payload: StoreCouponCreate,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _actor)
+        get_business_or_404(payload.business_id)
+        code = payload.code.strip().upper()
+        currency = payload.currency.strip().upper()
+        if not code.replace("-", "").replace("_", "").isalnum():
+            raise HTTPException(status_code=400, detail="رمز المكافأة يقبل الحروف والأرقام والشرطة فقط.")
+        if currency not in {"YER", "SAR", "USD", "AED", "EGP"}:
+            raise HTTPException(status_code=400, detail="العملة المحددة غير مدعومة.")
+        try:
+            growth = (
+                supabase.table("store_growth_settings")
+                .select("loyalty_enabled,minimum_redeem_points")
+                .eq("business_id", payload.business_id)
+                .limit(1)
+                .execute()
+            )
+            growth_settings = growth.data[0] if growth.data else {}
+            if not growth_settings.get("loyalty_enabled", True):
+                raise HTTPException(status_code=400, detail="فعّل برنامج الولاء قبل إنشاء مكافأة.")
+            minimum_points = int(growth_settings.get("minimum_redeem_points") or 20)
+            if payload.points_cost < minimum_points:
+                raise HTTPException(status_code=400, detail=f"تكلفة المكافأة يجب ألا تقل عن {minimum_points} نقطة.")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر التحقق من إعدادات الولاء قبل إنشاء المكافأة.")
+            raise HTTPException(status_code=503, detail="تعذر التحقق من إعدادات الولاء.")
+        values = {
+            "business_id": payload.business_id,
+            "code": code,
+            "title": payload.title.strip(),
+            "points_cost": payload.points_cost,
+            "discount_amount": payload.discount_amount,
+            "currency": currency,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=payload.expiry_days)).isoformat(),
+            "max_redemptions": payload.max_redemptions,
+            "is_active": True,
+        }
+        try:
+            inserted = supabase.table("store_coupons").insert(values).select("*").execute()
+            if inserted.data:
+                return {"success": True, "coupon": inserted.data[0]}
+            check = (
+                supabase.table("store_coupons")
+                .select("id,code,title,points_cost,discount_amount,currency,expires_at,max_redemptions,redemption_count,is_active")
+                .eq("business_id", payload.business_id)
+                .eq("code", code)
+                .limit(1)
+                .execute()
+            )
+            if check.data:
+                raise HTTPException(status_code=409, detail="رمز المكافأة مستخدم بالفعل في هذا المتجر.")
+            raise HTTPException(status_code=500, detail="لم يتم تأكيد إنشاء المكافأة.")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر إنشاء كوبون ولاء.")
+            raise HTTPException(status_code=503, detail="تعذر إنشاء المكافأة. تأكد من تطبيق ترحيل store_growth_features.")
 
     @router.get("/api/admin/products")
     def list_products(

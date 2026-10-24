@@ -11,6 +11,7 @@ import tempfile
 import uuid
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import httpx
 from urllib.parse import urlparse
 
@@ -20,7 +21,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from bot_logic import generate_ai_response, find_products_by_image, transcribe_audio
+from bot_logic import generate_ai_response, generate_shopping_advice, find_products_by_image, transcribe_audio
+from store_growth import extract_topic, format_loyalty_summary, is_product_inquiry, is_shopping_advice_request
 from telegram_products import import_telegram_product_post
 
 load_dotenv()
@@ -307,7 +309,7 @@ def get_available_products(business_id: str):
     try:
         result = (
             supabase.table("products")
-            .select("id, name, description, price, currency, is_available, model_number, stock_quantity")
+            .select("id, name, description, price, currency, is_available, model_number, category, stock_quantity")
             .eq("business_id", business_id)
             .eq("is_available", True)
             .execute()
@@ -330,6 +332,240 @@ def get_available_products(business_id: str):
     except Exception:
         logger.exception("تعذر قراءة المنتجات المتاحة.")
         return []
+
+
+# -----------------------------
+# Store growth: opt-in follow-ups and loyalty
+# -----------------------------
+
+def get_store_growth_settings(business_id: str):
+    defaults = {
+        "shopping_advisor_enabled": True,
+        "followups_enabled": True,
+        "followup_delay_hours": 24,
+        "loyalty_enabled": True,
+        "points_per_1000": 1,
+        "point_value_yer": 1,
+        "minimum_redeem_points": 20,
+        "repeat_purchase_threshold": 3,
+        "repeat_purchase_bonus_points": 10,
+        "coupon_expiry_days": 30,
+    }
+    if not supabase or not business_id:
+        return defaults
+    try:
+        result = (
+            supabase.table("store_growth_settings")
+            .select("*")
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return {**defaults, **result.data[0]}
+    except Exception:
+        logger.warning("Store growth settings unavailable; migration may not be applied yet.")
+    return defaults
+
+
+def set_telegram_reminder_preference(business_id: str, chat_id: int, enabled: bool):
+    if not supabase or not business_id:
+        return False
+    try:
+        supabase.table("telegram_customer_preferences").upsert({
+            "business_id": business_id,
+            "telegram_chat_id": str(chat_id),
+            "reminders_opt_in": bool(enabled),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="business_id,telegram_chat_id").execute()
+        if not enabled:
+            cancel_customer_followup(business_id, chat_id)
+        else:
+            # If consent is given after the inquiry, queue only the most recent
+            # unsatisfied inquiry from the last day; never revive one followed by an order.
+            recent = (
+                supabase.table("telegram_customer_followups")
+                .select("id,created_at")
+                .eq("business_id", business_id)
+                .eq("telegram_chat_id", str(chat_id))
+                .eq("status", "cancelled")
+                .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if recent.data:
+                inquiry = recent.data[0]
+                orders = (
+                    supabase.table("orders")
+                    .select("id")
+                    .eq("business_id", business_id)
+                    .eq("telegram_chat_id", str(chat_id))
+                    .gte("created_at", inquiry.get("created_at"))
+                    .neq("status", "cancelled")
+                    .limit(1)
+                    .execute()
+                )
+                if not orders.data:
+                    settings = get_store_growth_settings(business_id)
+                    delay_hours = max(1, min(168, int(settings.get("followup_delay_hours") or 24)))
+                    supabase.table("telegram_customer_followups").update({
+                        "status": "pending",
+                        "due_at": (datetime.now(timezone.utc) + timedelta(hours=delay_hours)).isoformat(),
+                    }).eq("id", inquiry["id"]).eq("status", "cancelled").execute()
+        return True
+    except Exception:
+        logger.exception("Could not save Telegram reminder preference.")
+        return False
+
+
+def customer_has_reminder_consent(business_id: str, chat_id: int):
+    if not supabase or not business_id:
+        return False
+    try:
+        result = (
+            supabase.table("telegram_customer_preferences")
+            .select("reminders_opt_in")
+            .eq("business_id", business_id)
+            .eq("telegram_chat_id", str(chat_id))
+            .limit(1)
+            .execute()
+        )
+        return bool(result.data and result.data[0].get("reminders_opt_in"))
+    except Exception:
+        return False
+
+
+def cancel_customer_followup(business_id: str, chat_id: int):
+    if not supabase or not business_id:
+        return
+    try:
+        supabase.table("telegram_customer_followups").update({
+            "status": "cancelled",
+        }).eq("business_id", business_id).eq(
+            "telegram_chat_id", str(chat_id)
+        ).eq("status", "pending").execute()
+    except Exception:
+        logger.warning("Could not cancel Telegram customer follow-up.")
+
+
+def schedule_customer_followup(business_id: str, chat_id: int, user_text: str):
+    """Remember a short inquiry label; queue delivery only after explicit consent."""
+    if not supabase or not business_id:
+        return False
+    settings = get_store_growth_settings(business_id)
+    if not settings.get("followups_enabled", True):
+        return False
+    try:
+        products = get_available_products(business_id)
+        topic = extract_topic(user_text, products)
+        now = datetime.now(timezone.utc)
+        delay_hours = max(1, min(168, int(settings.get("followup_delay_hours") or 24)))
+        opted_in = customer_has_reminder_consent(business_id, chat_id)
+        due_at = now + timedelta(hours=delay_hours)
+        supabase.table("telegram_customer_followups").upsert({
+            "business_id": business_id,
+            "telegram_chat_id": str(chat_id),
+            "topic": topic,
+            "status": "pending" if opted_in else "cancelled",
+            "due_at": due_at.isoformat(),
+            "created_at": now.isoformat(),
+            "sent_at": None,
+        }, on_conflict="business_id,telegram_chat_id").execute()
+        return opted_in
+    except Exception:
+        logger.exception("Could not schedule Telegram customer follow-up.")
+        return False
+
+
+def get_customer_loyalty(business_id: str, chat_id: int):
+    if not supabase or not business_id:
+        return None
+    try:
+        result = (
+            supabase.table("store_loyalty_accounts")
+            .select("points_balance,lifetime_points")
+            .eq("business_id", business_id)
+            .eq("customer_external_id", str(chat_id))
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else {"points_balance": 0, "lifetime_points": 0}
+    except Exception:
+        logger.exception("Could not load store loyalty account.")
+        return None
+
+
+async def send_due_telegram_followups():
+    """One-shot, consented reminders. Mark sent before network delivery to avoid duplicates."""
+    if not supabase or not TELEGRAM_BOT_TOKEN:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = (
+            supabase.table("telegram_customer_followups")
+            .select("id,business_id,telegram_chat_id,topic,created_at")
+            .eq("status", "pending")
+            .lte("due_at", now)
+            .limit(25)
+            .execute()
+        )
+        for item in result.data or []:
+            business_id = item.get("business_id")
+            chat_id = str(item.get("telegram_chat_id") or "")
+            if not business_id or not chat_id:
+                continue
+            settings = get_store_growth_settings(business_id)
+            if not settings.get("followups_enabled", True) or not customer_has_reminder_consent(business_id, int(chat_id)):
+                cancel_customer_followup(business_id, int(chat_id))
+                continue
+            # If a real order was created after the inquiry, the reminder is no longer relevant.
+            try:
+                orders = (
+                    supabase.table("orders")
+                    .select("id")
+                    .eq("business_id", business_id)
+                    .eq("telegram_chat_id", chat_id)
+                    .gte("created_at", item.get("created_at"))
+                    .neq("status", "cancelled")
+                    .limit(1)
+                    .execute()
+                )
+                if orders.data:
+                    cancel_customer_followup(business_id, int(chat_id))
+                    continue
+            except Exception:
+                # Fail closed: don't send if order-state verification is unavailable.
+                logger.warning("Skipping reminder because order-state verification failed.")
+                continue
+            claimed = (
+                supabase.table("telegram_customer_followups")
+                .update({"status": "sent", "sent_at": now})
+                .eq("id", item["id"])
+                .eq("status", "pending")
+                .select("id")
+                .execute()
+            )
+            if not claimed.data:
+                continue
+            topic = str(item.get("topic") or "المنتج الذي سألت عنه")[:120]
+            message = (
+                f"مرحبًا! تذكير واحد بناءً على موافقتك: سألتنا عن «{topic}». "
+                "هل ترغب في معرفة تفاصيل إضافية أو المساعدة في اختيار المنتج المناسب؟\n\n"
+                "إذا لم تعد ترغب في التذكيرات، أرسل /reminders_off."
+            )
+            try:
+                await send_telegram_message(int(chat_id), message)
+            except Exception:
+                logger.exception("Could not deliver a scheduled Telegram follow-up.")
+    except Exception:
+        logger.exception("Failed to process scheduled Telegram follow-ups.")
+
+
+async def telegram_followup_worker():
+    while True:
+        await asyncio.sleep(60)
+        await send_due_telegram_followups()
 
 
 # -----------------------------
@@ -834,6 +1070,8 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
                     "مع خدمة العملاء."
                 )
 
+            # The order is saved; stop any reminder for this abandoned inquiry.
+            cancel_customer_followup(state.get("business_id"), chat_id)
             clear_pending_telegram_order(chat_id)
 
             return (
@@ -845,9 +1083,10 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
             )
 
         if normalized in no_values:
+            cancel_customer_followup(state.get("business_id"), chat_id)
             with order_lock:
                 pending_telegram_orders.pop(chat_id, None)
-            return "تم إلغاء الطلب، ولم يتم حفظه."
+            return "تم إلغاء الطلب، ولم يتم حفظه. لن نرسل تذكيرًا بشأن هذا الطلب."
 
         return "أرسل «نعم» لتأكيد الطلب، أو «لا» لإلغائه."
 
@@ -1044,9 +1283,15 @@ async def configure_telegram_webhook():
 async def lifespan(app: FastAPI):
     # Use webhook delivery instead of polling to prevent Telegram 409 conflicts.
     await configure_telegram_webhook()
+    followup_task = asyncio.create_task(telegram_followup_worker())
     try:
         yield
     finally:
+        followup_task.cancel()
+        try:
+            await followup_task
+        except asyncio.CancelledError:
+            pass
         logger.info("Application shutdown complete.")
 
 
@@ -1230,6 +1475,9 @@ def download_telegram_photo(file_id: str):
         return None
 
 
+shopping_advisor_last_turn = {}
+
+
 async def respond_to_telegram_text(chat_id: int, user_text: str):
     """Route recognized voice text through the same order and AI flow as typed text."""
     try:
@@ -1246,23 +1494,53 @@ async def respond_to_telegram_text(chat_id: int, user_text: str):
         )
 
         if order_reply is not None:
+            shopping_advisor_last_turn.pop(f"{business_id}:{chat_id}", None)
             return order_reply
         if user_text.startswith("/"):
             return "الأوامر المتاحة: /start و /cancel"
 
-        context = (
-            await asyncio.to_thread(get_business_context, business_id)
-            if business_id else None
+        settings = await asyncio.to_thread(get_store_growth_settings, business_id)
+        advisor_key = f"{business_id}:{chat_id}"
+        last_advisor_turn = shopping_advisor_last_turn.get(advisor_key, 0)
+        advisor_continuation = (
+            last_advisor_turn and time.monotonic() - last_advisor_turn < 600
+            and load_pending_telegram_order(chat_id) is None
         )
-        return await asyncio.to_thread(
-            generate_ai_response,
-            f"telegram_{chat_id}",
-            user_text,
-            None,
-            context,
-            f"telegram_{chat_id}_{business_id or 'default'}",
-            business_id,
+        use_advisor = (
+            settings.get("shopping_advisor_enabled", True)
+            and (is_shopping_advice_request(user_text) or advisor_continuation)
         )
+        if use_advisor:
+            products = await asyncio.to_thread(get_available_products, business_id)
+            reply = await asyncio.to_thread(
+                generate_shopping_advice,
+                user_text,
+                products,
+                business_id,
+                f"shopping_advisor_telegram_{chat_id}_{business_id}",
+            )
+            shopping_advisor_last_turn[advisor_key] = time.monotonic()
+            if len(shopping_advisor_last_turn) > 2000:
+                shopping_advisor_last_turn.pop(next(iter(shopping_advisor_last_turn)))
+        else:
+            shopping_advisor_last_turn.pop(advisor_key, None)
+            context = (
+                await asyncio.to_thread(get_business_context, business_id)
+                if business_id else None
+            )
+            reply = await asyncio.to_thread(
+                generate_ai_response,
+                f"telegram_{chat_id}",
+                user_text,
+                None,
+                context,
+                f"telegram_{chat_id}_{business_id or 'default'}",
+                business_id,
+            )
+
+        if is_product_inquiry(user_text):
+            await asyncio.to_thread(schedule_customer_followup, business_id, chat_id, user_text)
+        return reply
     except Exception:
         logger.exception("فشل معالجة نص Telegram (نص مكتوب أو مستخرج من الصوت).")
         return "عذرًا، حدث خطأ مؤقت أثناء معالجة رسالتك. يرجى المحاولة مرة أخرى."
@@ -1568,7 +1846,9 @@ async def process_telegram_update(update: dict):
                 "1) أرسل «أريد طلب».\n"
                 "2) اختر المنتج من القائمة.\n"
                 "3) أرسل الكمية المطلوبة واتبع التعليمات حتى تأكيد الطلب.\n\n"
-                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة."
+                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة.\n"
+                "إذا رغبت في تذكير واحد بعد استفسارك، أرسل /reminders_on؛ ولن نرسل تذكيرات دون موافقتك.\n"
+                "لمعرفة نقاطك أرسل /points، ولاستبدال مكافأة أرسل /coupon متبوعًا برمزها."
             )
             if pending_order_cleared:
                 welcome_message += (
@@ -1592,6 +1872,85 @@ async def process_telegram_update(update: dict):
     if user_text.startswith("/cancel"):
         clear_pending_telegram_order(private_chat_id)
         await send_telegram_message(private_chat_id, "تم إلغاء الطلب الجاري.")
+        return
+
+    # Reminders are strictly opt-in and can be stopped at any time.
+    if user_text.strip().lower() in ("/reminders_on", "أوافق على التذكير", "أوافق على التذكيرات"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if not business_id:
+            await send_telegram_message(private_chat_id, "افتح رابط المتجر واضغط Start أولًا.")
+        elif await asyncio.to_thread(set_telegram_reminder_preference, business_id, private_chat_id, True):
+            await send_telegram_message(private_chat_id, "تم تفعيل تذكير واحد فقط بعد استفسارك عن منتج، إذا لم تُكمل الطلب. لن نرسل تذكيرات متكررة، ويمكنك الإيقاف في أي وقت بإرسال /reminders_off.")
+        else:
+            await send_telegram_message(private_chat_id, "تعذر حفظ موافقتك حاليًا. حاول لاحقًا.")
+        return
+
+    if user_text.strip().lower() in ("/reminders_off", "إيقاف التذكيرات", "ايقاف التذكيرات", "لا ترسل تذكيرات"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if business_id:
+            await asyncio.to_thread(set_telegram_reminder_preference, business_id, private_chat_id, False)
+        await send_telegram_message(private_chat_id, "تم إيقاف التذكيرات لهذا المتجر.")
+        return
+
+    if user_text.strip().lower() in ("لا أريد تذكير", "لا اريد تذكير", "غير مهتم", "غير مهتمة", "ما عاد مهتم", "ما عدت مهتم", "توقف"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if business_id:
+            await asyncio.to_thread(set_telegram_reminder_preference, business_id, private_chat_id, False)
+        await send_telegram_message(private_chat_id, "تم إيقاف التذكيرات. لن نرسل تذكيرات متابعة أخرى لهذا المتجر.")
+        return
+
+    if user_text.strip().lower() in ("/points", "نقاطي", "رصيد النقاط", "نقاط الولاء"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if not business_id:
+            await send_telegram_message(private_chat_id, "افتح رابط المتجر واضغط Start أولًا.")
+            return
+        settings = await asyncio.to_thread(get_store_growth_settings, business_id)
+        if not settings.get("loyalty_enabled", True):
+            await send_telegram_message(private_chat_id, "برنامج الولاء غير مفعّل في هذا المتجر حاليًا.")
+            return
+        account = await asyncio.to_thread(get_customer_loyalty, business_id, private_chat_id)
+        if account is None:
+            await send_telegram_message(private_chat_id, "تعذر قراءة نقاطك حاليًا. حاول لاحقًا.")
+            return
+        reply = format_loyalty_summary(
+            account.get("points_balance", 0),
+            account.get("lifetime_points", 0),
+            settings.get("minimum_redeem_points", 100),
+            settings.get("point_value_yer", 1),
+        )
+        reply += "\n\nتُضاف النقاط بعد تحويل الطلب إلى «تم التسليم» فقط. لاستبدال نقاطك أرسل /coupon متبوعًا برمز المكافأة."
+        await send_telegram_message(private_chat_id, reply)
+        return
+
+    if user_text.strip().lower().startswith("/coupon "):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        parts = user_text.strip().split(maxsplit=1)
+        coupon_code = parts[1].strip() if len(parts) > 1 else ""
+        if not business_id or not coupon_code:
+            await send_telegram_message(private_chat_id, "افتح رابط المتجر واضغط Start، ثم أرسل /coupon متبوعًا برمز المكافأة.")
+            return
+        try:
+            redeemed = await asyncio.to_thread(
+                lambda: supabase.rpc("redeem_store_loyalty_coupon", {
+                    "p_business_id": business_id,
+                    "p_customer_external_id": str(private_chat_id),
+                    "p_coupon_code": coupon_code,
+                }).execute().data
+            )
+            if isinstance(redeemed, list):
+                redeemed = redeemed[0] if redeemed else {}
+            if isinstance(redeemed, dict) and redeemed.get("success"):
+                await send_telegram_message(
+                    private_chat_id,
+                    f"تم استبدال النقاط بنجاح! 🎉\nالمكافأة: {redeemed.get('title') or redeemed.get('code')}\nقيمة الخصم المسجلة: {redeemed.get('discount_amount')} {redeemed.get('currency') or 'YER'}\nتنتهي المكافأة: {redeemed.get('expires_at')}\nأظهر هذا الرمز للمتجر عند إتمام الشراء."
+                )
+            else:
+                reason = redeemed.get("reason") if isinstance(redeemed, dict) else None
+                message_text = "نقاطك غير كافية لاستبدال هذه المكافأة." if reason == "insufficient_points" else "رمز المكافأة غير صالح أو منتهي أو وصل إلى حد الاستخدام."
+                await send_telegram_message(private_chat_id, message_text)
+        except Exception:
+            logger.exception("Failed to redeem store loyalty coupon.")
+            await send_telegram_message(private_chat_id, "تعذر استبدال المكافأة الآن. تأكد من تطبيق ترحيل قاعدة البيانات وحاول لاحقًا.")
         return
 
     # A photo is a visual-search request even when it also has a caption.
