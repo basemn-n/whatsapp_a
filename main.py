@@ -506,6 +506,7 @@ async def send_due_telegram_followups():
                 .update({"status": "sent", "sent_at": now})
                 .eq("id", item["id"])
                 .eq("status", "pending")
+                .select("id")
                 .execute()
             )
             if not claimed.data:
