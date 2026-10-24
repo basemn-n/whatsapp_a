@@ -1440,21 +1440,21 @@ async def process_telegram_update(update: dict):
         if is_customer_order_intent(user_text):
             intro = (
                 f"أهلًا {sender_name}، لإتمام طلبك وحفاظًا على خصوصية بياناتك، "
-                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\\n\\n"
-                "1) افتح رابط مساعد المتجر الذي نشره صاحب المتجر.\\n"
-                "2) اضغط Start في Telegram.\\n"
+                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\n\n"
+                "1) افتح رابط مساعد المتجر الذي نشره صاحب المتجر.\n"
+                "2) اضغط Start في Telegram.\n"
                 "3) أرسل «أريد طلب» واتبع التعليمات لاختيار المنتج والكمية."
             )
             if TELEGRAM_BOT_USERNAME:
                 private_link = (
                     f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={business_id}"
                 )
-                reply_text = intro + f"\\n\\nرابط إتمام الطلب: {private_link}"
+                reply_text = intro + f"\n\nرابط إتمام الطلب: {private_link}"
             else:
                 # Never hard-code one merchant's bot username into all stores.
                 reply_text = (
                     intro
-                    + "\\n\\nلم يُضبط اسم مستخدم البوت في إعدادات النظام؛ "
+                    + "\n\nلم يُضبط اسم مستخدم البوت في إعدادات النظام؛ "
                     "يرجى استخدام رابط مساعد المتجر الموجود في وصف المتجر."
                 )
         else:
