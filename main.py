@@ -20,7 +20,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from bot_logic import generate_ai_response, transcribe_audio
+from bot_logic import generate_ai_response, find_products_by_image, transcribe_audio
 from telegram_products import import_telegram_product_post
 
 load_dotenv()
@@ -263,6 +263,41 @@ def save_telegram_business(chat_id: int, business_id: str):
     except Exception:
         logger.exception("تعذر حفظ ارتباط Telegram بالنشاط.")
         return False
+
+
+
+def get_visual_search_products(business_id: str):
+    """Return only available products from the explicitly bound Telegram store."""
+    if not supabase or not business_id:
+        return []
+    try:
+        result = (
+            supabase.table("products")
+            .select(
+                "id, name, description, price, currency, is_available, "
+                "model_number, category, stock_quantity, image_url"
+            )
+            .eq("business_id", business_id)
+            .eq("is_available", True)
+            .order("name")
+            .limit(100)
+            .execute()
+        )
+        products = result.data or []
+        available = []
+        for product in products:
+            stock = product.get("stock_quantity")
+            if stock is not None:
+                try:
+                    if int(stock) <= 0:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            available.append(product)
+        return available
+    except Exception:
+        logger.exception("تعذر تحميل كتالوج المتجر للبحث البصري.")
+        return []
 
 
 def get_available_products(business_id: str):
@@ -1559,17 +1594,86 @@ async def process_telegram_update(update: dict):
         await send_telegram_message(private_chat_id, "تم إلغاء الطلب الجاري.")
         return
 
+    # A photo is a visual-search request even when it also has a caption.
+    photos = message.get("photo") or []
+    if photos:
+        photo_file_id = str((photos[-1] or {}).get("file_id") or "")
+        image_bytes = await asyncio.to_thread(download_telegram_photo, photo_file_id)
+        if not image_bytes:
+            await send_telegram_message(
+                private_chat_id,
+                "لم أتمكن من قراءة الصورة. أرسل صورة واضحة للمنتج مع إضاءة جيدة.",
+            )
+            return
+
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if not business_id:
+            await send_telegram_message(
+                private_chat_id,
+                "للبحث عن المنتج بالصورة، افتح رابط مساعد المتجر واضغط Start أولًا حتى أبحث داخل كتالوج المتجر الصحيح.",
+            )
+            return
+
+        products = await asyncio.to_thread(get_visual_search_products, business_id)
+        if not products:
+            await send_telegram_message(
+                private_chat_id,
+                "لا توجد منتجات متاحة للبحث البصري في هذا المتجر حاليًا.",
+            )
+            return
+
+        try:
+            matches = await asyncio.to_thread(
+                find_products_by_image,
+                image_bytes,
+                products,
+                user_text,
+                business_id,
+            )
+        except Exception:
+            logger.exception("Telegram visual product search failed.")
+            matches = []
+
+        if not matches:
+            await send_telegram_message(
+                private_chat_id,
+                "لم أجد تطابقًا موثوقًا للصورة داخل منتجات هذا المتجر. "
+                "جرّب صورة أوضح أو اكتب اسم المنتج أو لونه أو رقم موديله. "
+                "لن أخمّن اسم المنتج أو سعره.",
+            )
+            return
+
+        lines = ["وجدت منتجات قد تشبه الصورة في هذا المتجر:"]
+        for item in matches:
+            product = item["product"]
+            name = str(product.get("name") or "منتج")
+            model = str(product.get("model_number") or "").strip()
+            price = product.get("price")
+            currency = str(product.get("currency") or "YER")
+            detail = f"• {name}"
+            if model:
+                detail += f" — الموديل: {model}"
+            if price is not None:
+                detail += f" — السعر المسجل: {price} {currency}"
+            reason = str(item.get("reason") or "").strip()
+            if reason:
+                detail += f"\n  سبب التشابه: {reason}"
+            lines.append(detail)
+        lines.append("\nنتائج التشابه تقديرية وليست ضمانًا أن المنتج مطابق تمامًا للصورة.")
+        await send_telegram_message(private_chat_id, "\n".join(lines))
+        return
+
     if user_text:
         reply_text = await respond_to_telegram_text(private_chat_id, user_text)
         await send_telegram_message(private_chat_id, reply_text)
         return
 
-    # Do not expose or collect voice/photo content in a public group. Private
-    # non-text media gets a clear prompt until its dedicated processing is available.
-    if message.get("photo") or message.get("voice") or message.get("audio"):
+    # Voice messages remain on the existing transcription flow; this stage adds
+    # image search only and deliberately does not process media in public groups.
+    if message.get("voice") or message.get("audio"):
         await send_telegram_message(
             private_chat_id,
-            "وصلتني الوسائط. أرسل سؤالك كتابةً حاليًا، أو اذكر اسم المنتج ورقم الموديل.",
+            "وصلتني الرسالة الصوتية. أرسل سؤالك كتابةً أو استخدم البحث بالصورة لإيجاد منتج مشابه.",
         )
         return
 
