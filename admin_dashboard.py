@@ -54,7 +54,7 @@ class StoreGrowthSettingsUpdate(BaseModel):
     loyalty_enabled: bool = True
     points_per_1000: float = Field(default=1, ge=0, le=100000)
     point_value_yer: float = Field(default=1, gt=0, le=100000)
-    minimum_redeem_points: int = Field(default=100, ge=1, le=100000000)
+    minimum_redeem_points: int = Field(default=20, ge=1, le=100000000)
     coupon_expiry_days: int = Field(default=30, ge=1, le=365)
 
 
@@ -3228,7 +3228,7 @@ if (auth) {
             "loyalty_enabled": True,
             "points_per_1000": 1,
             "point_value_yer": 1,
-            "minimum_redeem_points": 100,
+            "minimum_redeem_points": 20,
             "coupon_expiry_days": 30,
         }
         try:
@@ -3319,7 +3319,7 @@ if (auth) {
             "is_active": True,
         }
         try:
-            inserted = supabase.table("store_coupons").insert(values).execute()
+            inserted = supabase.table("store_coupons").insert(values).select("*").execute()
             if inserted.data:
                 return {"success": True, "coupon": inserted.data[0]}
             check = (
