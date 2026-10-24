@@ -1490,6 +1490,7 @@ async def respond_to_telegram_text(chat_id: int, user_text: str):
         )
 
         if order_reply is not None:
+            shopping_advisor_last_turn.pop(f"{business_id}:{chat_id}", None)
             return order_reply
         if user_text.startswith("/"):
             return "الأوامر المتاحة: /start و /cancel"
