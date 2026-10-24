@@ -1082,6 +1082,115 @@ self.addEventListener("fetch", event => {
 });"""
         return Response(content=worker, media_type="application/javascript", headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
+    @router.get("/merchant-app", response_class=HTMLResponse)
+    def merchant_app_install_page():
+        return HTMLResponse(r"""
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#123c36">
+<meta name="application-name" content="إدارة المتجر">
+<meta name="description" content="ثبّت تطبيق إدارة المتجر على هاتفك للوصول السريع إلى منتجاتك وطلباتك ومبيعاتك.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="/app-icon.svg">
+<link rel="apple-touch-icon" href="/app-icon.svg">
+<title>تثبيت تطبيق إدارة المتجر</title>
+<style>
+:root{color-scheme:light;--green:#173f35;--green2:#245b4c;--gold:#d5b474;--ink:#20332e;--muted:#6b7c74;--line:#e1e9e0;--paper:#fffdf8;--soft:#f3f6ef}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:24px;display:grid;place-items:center;background:radial-gradient(ellipse at 12% 8%,#e3eadb 0,transparent 34%),radial-gradient(ellipse at 90% 90%,#f0e6d2 0,transparent 34%),#f7f8f2;font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:var(--ink);line-height:1.8}
+main{width:min(100%,720px);background:var(--paper);border:1px solid var(--line);border-radius:28px;overflow:hidden;box-shadow:0 28px 90px #183a2c16}
+.hero{padding:clamp(28px,6vw,54px);text-align:center;background:linear-gradient(145deg,#173f35,#245b4c);color:#fff}
+.logo{width:76px;height:76px;object-fit:contain;border-radius:22px;background:#fff;padding:7px;box-shadow:0 10px 30px #071e191c}
+.eyebrow{margin:18px 0 4px;color:#e8d09a;font-size:13px;font-weight:800}
+h1{font-size:clamp(27px,5vw,39px);line-height:1.45;margin:0}
+.hero p{max-width:510px;margin:12px auto 0;color:#e2ebe4;font-size:15px}
+.content{padding:clamp(24px,5vw,42px)}
+.install{display:block;width:100%;padding:16px 20px;border:0;border-radius:14px;background:var(--green);color:white;font:inherit;font-size:17px;font-weight:800;cursor:pointer;box-shadow:0 9px 20px #173f3520}
+.install:hover{background:var(--green2)}
+.note{margin:12px 0 24px;color:var(--muted);font-size:13px;text-align:center}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.action{display:block;text-align:center;text-decoration:none;padding:13px 14px;border:1px solid #dbe5da;border-radius:12px;color:var(--green);font-weight:800;background:#fff}
+.action.primary{background:#edf3e9}
+.steps{margin:25px 0 0;padding:18px 20px;background:var(--soft);border:1px solid var(--line);border-radius:14px}
+.steps h2{font-size:16px;margin:0 0 8px}
+.steps ol{margin:0;padding-right:22px;color:var(--muted);font-size:14px}
+footer{padding:0 24px 24px;text-align:center;color:var(--muted);font-size:12px}
+@media(max-width:520px){body{padding:12px}main{border-radius:22px}.actions{grid-template-columns:1fr}.hero{padding:30px 22px}}
+</style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <img class="logo" src="/app-icon.svg" alt="شعار إدارة المتجر">
+    <div class="eyebrow">مساحة عملك التجارية</div>
+    <h1>تثبيت تطبيق إدارة المتجر</h1>
+    <p>ثبّت التطبيق على هاتفك وافتح منتجاتك وطلباتك ومبيعاتك من أيقونة واحدة، مع تحديثات التطبيق عبر الإنترنت.</p>
+  </section>
+  <section class="content">
+    <button class="install" id="installButton" type="button">تثبيت تطبيق إدارة المتجر</button>
+    <p class="note" id="installNote" role="status">اضغط على الزر لبدء التثبيت. إذا لم يظهر خيار التثبيت، ستظهر لك خطوات جهازك.</p>
+    <div class="actions">
+      <a class="action primary" href="/admin">لدي حساب تاجر — تسجيل الدخول</a>
+      <a class="action" href="/signup">أنا تاجر جديد — إنشاء حساب</a>
+    </div>
+    <section class="steps">
+      <h2>بعد التثبيت</h2>
+      <ol>
+        <li>افتح التطبيق من الأيقونة التي تظهر على شاشة الهاتف.</li>
+        <li>اختر «التاجر» في صفحة الدخول.</li>
+        <li>سجّل الدخول بعد موافقة المدير العام على حسابك.</li>
+      </ol>
+    </section>
+  </section>
+  <footer>رابط واحد للتجار: تثبيت التطبيق أو تسجيل الدخول أو طلب إنشاء متجر جديد.</footer>
+</main>
+<script>
+let deferredInstallPrompt = null;
+const installButton = document.getElementById("installButton");
+const installNote = document.getElementById("installNote");
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  installNote.textContent = "التطبيق جاهز للتثبيت على هذا الجهاز.";
+});
+installButton.addEventListener("click", async () => {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    installNote.textContent = choice && choice.outcome === "accepted"
+      ? "بدأ تثبيت التطبيق. ستجد أيقونته على شاشة جهازك."
+      : "لم يتم التثبيت بعد. يمكنك الضغط على الزر والمحاولة مجددًا.";
+    deferredInstallPrompt = null;
+    return;
+  }
+  const ua = navigator.userAgent || "";
+  const isIOS = /iphone|ipad|ipod/i.test(ua);
+  const isAndroid = /android/i.test(ua);
+  installNote.textContent = isIOS
+    ? "على iPhone أو iPad: افتح الرابط في Safari، ثم اضغط مشاركة واختر «إضافة إلى الشاشة الرئيسية»."
+    : isAndroid
+      ? "على Android: افتح الرابط في Chrome، ثم اضغط ⋮ واختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية»."
+      : "من قائمة المتصفح اختر «تثبيت التطبيق» أو «إنشاء اختصار». إذا لم يظهر الخيار، افتح الرابط في Chrome أو Edge.";
+});
+window.addEventListener("appinstalled", () => {
+  installButton.textContent = "تم تثبيت تطبيق إدارة المتجر";
+  installNote.textContent = "تم تثبيت التطبيق على هذا الجهاز.";
+});
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js", {updateViaCache:"none"})
+      .then(registration => registration.update())
+      .catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
+""", headers={"Cache-Control": "no-store"})
+
     @router.get("/admin", response_class=HTMLResponse)
     def dashboard():
         return HTMLResponse(r"""
