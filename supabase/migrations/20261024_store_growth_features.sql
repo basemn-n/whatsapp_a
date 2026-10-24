@@ -146,6 +146,9 @@ begin
         return new;
     end if;
 
+    if greatest(coalesce(new.total_price, 0), 0) <= 0 then
+        return new;
+    end if;
     v_points := floor((greatest(coalesce(new.total_price, 0), 0) / 1000.0) * greatest(coalesce(v_points_per_1000, 1), 0))::integer;
     v_repeat_threshold := greatest(coalesce(v_repeat_threshold, 3), 2);
     v_repeat_bonus := greatest(coalesce(v_repeat_bonus, 10), 0);
@@ -155,6 +158,7 @@ begin
      where business_id = new.business_id
        and telegram_chat_id::text = v_customer_id
        and status = 'delivered'
+       and coalesce(total_price, 0) > 0
        and id <> new.id;
 
     if v_repeat_bonus > 0 and mod(v_prior_delivered + 1, v_repeat_threshold) = 0 then
