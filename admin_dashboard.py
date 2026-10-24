@@ -896,6 +896,70 @@ searchInput.addEventListener("input",()=>{{
 </body></html>"""
         return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
 
+    @router.get("/manifest.webmanifest")
+    def store_app_manifest():
+        manifest = {
+            "id": "/admin",
+            "name": "إدارة المتجر",
+            "short_name": "إدارة المتجر",
+            "description": "إدارة الطلبات والمنتجات والمبيعات لمتجرك",
+            "lang": "ar",
+            "dir": "rtl",
+            "start_url": "/admin",
+            "scope": "/",
+            "display": "standalone",
+            "orientation": "any",
+            "background_color": "#f6f5f0",
+            "theme_color": "#123c36",
+            "icons": [
+                {"src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+            ]
+        }
+        return Response(
+            content=json.dumps(manifest, ensure_ascii=False),
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @router.get("/app-icon.svg")
+    def store_app_icon():
+        icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#174f46"/><stop offset="1" stop-color="#0d302c"/></linearGradient><linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f1dba7"/><stop offset="1" stop-color="#c29a53"/></linearGradient></defs>
+<rect width="512" height="512" rx="116" fill="url(#bg)"/>
+<circle cx="256" cy="240" r="152" fill="none" stroke="#ffffff" stroke-opacity=".12" stroke-width="2"/>
+<path d="M145 196 256 135 367 196" fill="none" stroke="url(#gold)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="154" y="196" width="204" height="157" rx="22" fill="#f8f5ec"/>
+<path d="M184 230h144M184 269h88M184 308h116" stroke="#1c675a" stroke-width="14" stroke-linecap="round"/>
+<circle cx="334" cy="328" r="45" fill="url(#gold)" stroke="#174f46" stroke-width="9"/>
+<path d="m313 328 14 14 28-31" fill="none" stroke="#174f46" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>"""
+        return Response(content=icon, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+    @router.get("/service-worker.js")
+    def store_service_worker():
+        worker = """const CACHE = "store-admin-shell-v1";
+const SHELL = ["/manifest.webmanifest", "/app-icon.svg"];
+self.addEventListener("install", event => {
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
+  self.skipWaiting();
+});
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+  );
+  self.clients.claim();
+});
+self.addEventListener("fetch", event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || request.method !== "GET") return;
+  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname === "/manifest.webmanifest" || url.pathname === "/app-icon.svg") {
+    event.respondWith(caches.match(request).then(cached => cached || fetch(request)));
+  }
+});"""
+        return Response(content=worker, media_type="application/javascript", headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
     @router.get("/admin", response_class=HTMLResponse)
     def dashboard():
         return HTMLResponse(r"""
@@ -903,8 +967,13 @@ searchInput.addEventListener("input",()=>{{
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>لوحة إدارة المتجر</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#123c36">
+<meta name="application-name" content="إدارة المتجر">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="/app-icon.svg">
+<link rel="apple-touch-icon" href="/app-icon.svg">
+<title>إدارة المتجر | مساحة عملك</title>
 <style>
 :root{--ink:#182338;--muted:#66758b;--brand:#3157d5;--brand-dark:#243fa8;--line:#e4eaf3;--surface:#fff;--canvas:#f5f7fc;--success:#0d8057;--danger:#b42318}
 *{box-sizing:border-box}
@@ -1047,6 +1116,151 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 @media(max-width:700px){.dashboard-layout{grid-template-columns:1fr}.dashboard-tree{position:static;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.dashboard-tree-title,.dashboard-tree-group,.dashboard-tree-note{grid-column:1/-1}.dashboard-tree-item{margin:0;padding:10px 8px;font-size:13px}.dashboard-tree-branch{display:contents}.dashboard-main{min-width:0}.overview-heading{align-items:flex-start;flex-direction:column}.overview-heading h3{font-size:22px}}
 
 @media(max-width:560px){body{padding:8px}.page-head{border-radius:16px;flex-direction:column}.brand-icon{width:45px;height:45px}.tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.tabs button{padding:10px 5px;font-size:13px}.grid{grid-template-columns:1fr}.full{grid-column:auto}.panel{padding:14px;border-radius:14px}.stats{gap:8px}.stat-card{padding:13px}.toolbar select{width:100%}.search-box{min-width:100%}.login-card{padding:22px}}
+
+/* Premium responsive design system */
+:root{color-scheme:light;--ink:#172b29;--muted:#687875;--brand:#17695c;--brand-dark:#0f5047;--line:#e4e8e1;--surface:#fffefa;--canvas:#f5f5f0;--success:#18724f;--danger:#b42318;--gold:#d4b579;--shadow:0 12px 34px rgba(22,53,47,.07)}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:radial-gradient(ellipse at 8% 0%,#e6eee6 0,transparent 36%),linear-gradient(180deg,#f8f8f3 0,#f3f4ef 100%);padding:22px;line-height:1.7}
+main{max-width:1560px}
+button,select,input,textarea{border-radius:12px;min-height:44px}
+button{background:var(--brand);box-shadow:0 3px 10px rgba(23,105,92,.12);font-weight:700}
+button:hover{background:var(--brand-dark);box-shadow:0 7px 18px rgba(23,105,92,.16)}
+button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #d4b579;outline-offset:2px}
+.page-head{position:relative;overflow:hidden;padding:26px 28px;background:linear-gradient(115deg,#102f2b 0%,#174f46 58%,#216d5e 100%);border:1px solid rgba(255,255,255,.1);border-radius:26px;box-shadow:0 20px 42px rgba(15,63,54,.16)}
+.page-head:after{content:"";position:absolute;width:300px;height:300px;left:-90px;top:-180px;border:1px solid rgba(212,181,121,.23);border-radius:50%;box-shadow:0 0 0 28px rgba(212,181,121,.035),0 0 0 58px rgba(212,181,121,.025);pointer-events:none}
+.brand-mark,.head-actions{position:relative;z-index:1}
+.brand-icon{width:58px;height:58px;border-radius:19px;background:linear-gradient(145deg,#f2dfb6,#c9a45f);border:1px solid rgba(255,255,255,.45);color:#143f37;font-size:27px;font-weight:900;box-shadow:0 8px 22px #071f1c45}
+.page-head h2{font-size:clamp(25px,3vw,35px);font-weight:850;letter-spacing:-.6px}
+.page-head p{font-size:14px;color:#dce9e1}
+.head-actions{flex-wrap:wrap}
+.head-actions button{min-height:42px;background:#ffffff12;border:1px solid #ffffff36;border-radius:12px;box-shadow:none}
+.head-actions button#installAppBtn{background:#f0ddb4;color:#173e36;border-color:#f0ddb4}
+#businessToolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 17px;background:#fffefa;border:1px solid var(--line);border-radius:16px;box-shadow:0 4px 16px rgba(22,53,47,.035)}
+#businessToolbar label{margin:0;color:#65756e;font-size:13px}
+#businessSelect{width:auto;min-width:min(300px,100%);max-width:100%;flex:1}
+.dashboard-layout{grid-template-columns:258px minmax(0,1fr);gap:20px;margin-top:18px}
+.dashboard-tree{background:rgba(255,254,250,.94);border:1px solid #e1e7de;border-radius:21px;padding:15px;top:16px;box-shadow:var(--shadow)}
+.dashboard-tree-title{font-size:16px;color:#193e37;border-bottom-color:#e8e8de}
+.dashboard-tree-group{color:#9b8559;letter-spacing:.25px}
+.dashboard-tree-item{min-height:45px;padding:10px 11px;color:#536760;border-radius:12px;transition:background .16s,border-color .16s,color .16s}
+.dashboard-tree-item span{color:#748a80}
+.dashboard-tree-item:hover{background:#edf4ef;color:var(--brand)}
+.dashboard-tree-item.active{background:linear-gradient(100deg,#e7f1e9,#f6f4e9);border-color:#d8e6d8;color:#155b4f;font-weight:800}
+.dashboard-tree-note{border-top-color:#e7e9df}
+.dashboard-main>#msg{border-radius:14px;border-color:#dce7dd;background:#edf5ee;color:#24594d}
+.panel,.overview-card,.stat-card,.product-content{border-color:#e3e7de;box-shadow:var(--shadow);border-radius:19px}
+.panel{padding:23px;background:var(--surface)}
+.overview-card{background:linear-gradient(150deg,#fffefa 0%,#fbfcf7 100%);padding:21px}
+.overview-card h3{color:#263e38}
+.overview-number,.stat-card strong{color:var(--brand)}
+.overview-kicker{color:#98783c;letter-spacing:1.2px}
+.overview-heading h3{font-size:clamp(23px,2.5vw,30px);letter-spacing:-.4px}
+.overview-section-title{margin-top:27px}
+.quick-actions button{border-radius:11px}
+.quick-actions .secondary,.secondary{background:#eef4ed;color:#205c50;border-color:#dce8dc;box-shadow:none}
+.quick-actions .secondary:hover,.secondary:hover{background:#e2eee2}
+.stat-card{background:#fffefa}
+.wrap{border-color:#e3e8df;border-radius:15px;box-shadow:0 3px 12px rgba(22,53,47,.025)}
+table{min-width:900px}
+th{background:#edf2eb;color:#3e5c50;padding:14px 12px;border-bottom-color:#dfe7dc}
+td{padding:13px 12px;border-bottom-color:#edf0e9}
+tbody tr:nth-child(even){background:#fcfcf8}
+tbody tr:hover{background:#f1f6ef}
+td select{border-radius:10px;min-width:150px}
+td button{border-radius:10px}
+#msg{box-shadow:none}
+.sub-panel,.product-tree{background:#f7f8f2;border-color:#e3e8dd}
+.product-tree-item.active{background:#fff;border-color:#d8e6d8;color:var(--brand)}
+.login-overlay{background:rgba(9,31,27,.68)}
+.login-card{border-radius:26px;border-color:#e4e8de;box-shadow:0 28px 90px rgba(8,28,24,.3)}
+.login-logo{background:#e8f1e8;color:#155b4f;border:1px solid #d5e5d7}
+.login-card h2{color:#173d35}
+input,textarea,select{border-color:#dce3d9}
+input:focus,textarea:focus,select:focus{border-color:#79a995;box-shadow:0 0 0 3px rgba(23,105,92,.12)}
+#orderSearch,.search-box input{min-height:48px}
+#ordersPanel .toolbar{gap:10px}
+#ordersPanel .toolbar select{min-width:180px}
+#ordersPanel .wrap{overflow-x:auto;overscroll-behavior-x:contain}
+#orderRows td:last-child button{min-width:108px}
+.mobile-scroll-hint{display:none}
+@media(max-width:1000px){body{padding:16px}.dashboard-layout{grid-template-columns:220px minmax(0,1fr);gap:13px}.dashboard-tree{padding:11px}.dashboard-tree-item{font-size:13px;padding:9px}}
+@media(max-width:700px){
+ body{padding:10px 10px calc(18px + env(safe-area-inset-bottom))}
+ .page-head{padding:19px;border-radius:20px;gap:14px}
+ .brand-mark{gap:12px;align-items:flex-start}
+ .brand-icon{width:48px;height:48px;border-radius:15px;flex:0 0 48px;font-size:22px}
+ .page-head h2{font-size:25px}
+ .page-head p{font-size:13px;max-width:34ch}
+ .head-actions{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+ .head-actions button{width:100%;padding:10px 8px;font-size:13px}
+ #businessToolbar{align-items:stretch;display:grid;grid-template-columns:1fr;gap:7px;padding:12px;border-radius:15px}
+ #businessToolbar label{font-size:12px}
+ #businessSelect{width:100%;min-width:0}
+ .dashboard-layout{grid-template-columns:1fr;gap:12px;margin-top:12px}
+ .dashboard-tree{position:relative;top:auto;display:flex;align-items:center;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding:8px;border-radius:15px;scrollbar-width:thin}
+ .dashboard-tree-title,.dashboard-tree-group,.dashboard-tree-note{display:none}
+ .dashboard-tree-branch{display:contents}
+ .dashboard-tree-item{flex:0 0 auto;width:auto;white-space:nowrap;margin:0;padding:9px 11px;font-size:12px;min-height:40px}
+ .dashboard-tree-item span{width:auto;flex:0 0 auto}
+ .dashboard-main{min-width:0}
+ .overview-heading{gap:10px;margin-bottom:12px}
+ .overview-heading h3{font-size:22px}
+ .overview-heading p{font-size:13px}
+ .overview-heading>button{width:100%}
+ .overview-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+ .overview-card{padding:14px;border-radius:16px}
+ .overview-card h3{font-size:14px;line-height:1.5}
+ .overview-number{font-size:27px}
+ .overview-sub{font-size:11px;line-height:1.6}
+ .quick-actions{gap:6px}
+ .quick-actions button{min-width:0;width:100%;font-size:12px;padding:9px 7px}
+ .overview-section-title{margin:20px 0 10px}
+ .overview-section-title h3{font-size:16px}
+ .overview-section-title p{font-size:12px}
+ .panel,.product-content{padding:14px;border-radius:16px}
+ .toolbar{gap:8px}
+ .toolbar select,.toolbar button{width:100%;max-width:none}
+ .search-box{min-width:100%}
+ .grid{grid-template-columns:1fr}
+ .full{grid-column:auto}
+ .stat-card{padding:13px;border-radius:14px}
+ .stats{gap:8px}
+ .stat-card span{font-size:12px}
+ .stat-card strong{font-size:24px}
+ .section-heading{flex-direction:column}
+ #ordersPanel .toolbar select{min-width:0}
+ #ordersPanel .wrap{overflow:visible;border:0;background:transparent;box-shadow:none}
+ #ordersPanel table{min-width:0;width:100%;border-collapse:separate;border-spacing:0}
+ #ordersPanel thead{display:none}
+ #orderRows{display:grid;gap:11px}
+ #orderRows tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;background:#fffefa;border:1px solid #e1e7de;border-radius:16px;overflow:hidden;box-shadow:0 5px 16px rgba(22,53,47,.045)}
+ #orderRows td{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0;padding:10px;border-bottom:1px solid #edf0e9;font-size:13px;overflow-wrap:anywhere}
+ #orderRows td:before{font-size:10px;color:#78877e;font-weight:800}
+ #orderRows td:nth-child(1):before{content:"رقم الطلب"}
+ #orderRows td:nth-child(2):before{content:"المنتج"}
+ #orderRows td:nth-child(3):before{content:"الكمية"}
+ #orderRows td:nth-child(4):before{content:"العميل"}
+ #orderRows td:nth-child(5):before{content:"الهاتف"}
+ #orderRows td:nth-child(6):before{content:"العنوان"}
+ #orderRows td:nth-child(7):before{content:"طريقة الدفع"}
+ #orderRows td:nth-child(8):before{content:"حالة الطلب"}
+ #orderRows td:nth-child(9):before{content:"إجراء"}
+ #orderRows td:nth-child(6),#orderRows td:nth-child(8),#orderRows td:nth-child(9){grid-column:1/-1}
+ #orderRows td select,#orderRows td button{width:100%;max-width:none;min-width:0}
+ #orderRows td:last-child{border-bottom:0}
+ #orderRows td:nth-child(1){background:#f4f6ef;color:#1a594c;font-weight:850}
+ #orderRows td:nth-child(8) select{min-height:46px}
+ .overview-table{min-width:560px}
+ .overview-grid:has(.overview-table){grid-template-columns:1fr}
+ .product-workspace{grid-template-columns:1fr;gap:10px}
+ .product-tree{display:flex;overflow-x:auto;gap:6px;padding:8px;position:static}
+ .tree-heading,.tree-root,.tree-help{display:none}
+ .product-tree-item{flex:0 0 auto;width:auto;white-space:nowrap}
+ .login-card{padding:22px;border-radius:22px}
+}
+@media(max-width:390px){.overview-grid{grid-template-columns:1fr}.overview-card{padding:15px}.page-head h2{font-size:23px}.brand-icon{width:44px;height:44px;flex-basis:44px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
 </style>
 </head>
 <body>
@@ -1056,7 +1270,7 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     <div class="brand-icon" aria-hidden="true">▦</div>
     <div><h2>إدارة المتجر</h2><p>مساحة عملك لإدارة الطلبات والمنتجات والمبيعات من مكان واحد.</p></div>
   </div>
-  <div class="head-actions"><button type="button" onclick="openLogin()" id="accountBtn">تسجيل الدخول</button><button type="button" onclick="logout()" id="logoutBtn" class="hidden">تسجيل الخروج</button></div>
+  <div class="head-actions"><button type="button" id="installAppBtn" onclick="installStoreApp()">تثبيت التطبيق</button><button type="button" onclick="openLogin()" id="accountBtn">تسجيل الدخول</button><button type="button" onclick="logout()" id="logoutBtn" class="hidden">تسجيل الخروج</button></div>
 </header>
 
 <div class="toolbar" id="businessToolbar" style="margin-top:16px">
@@ -3009,6 +3223,35 @@ document.getElementById("productSearch")
 
 document.getElementById("orderSearch")
   .addEventListener("input", renderOrders);
+
+let deferredInstallPrompt = null;
+const installAppButton = document.getElementById("installAppBtn");
+window.addEventListener("beforeinstallprompt", event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  if (installAppButton) installAppButton.classList.remove("hidden");
+});
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  if (installAppButton) installAppButton.textContent = "تم تثبيت التطبيق";
+  setMessage("تم تثبيت إدارة المتجر على جهازك.");
+});
+async function installStoreApp() {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    if (choice && choice.outcome === "accepted") setMessage("بدأ تثبيت التطبيق على جهازك.");
+    return;
+  }
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  setMessage(isIOS
+    ? "لتثبيت التطبيق على iPhone أو iPad: افتح قائمة المشاركة في Safari ثم اختر «إضافة إلى الشاشة الرئيسية»."
+    : "إذا لم يظهر مربع التثبيت، افتح قائمة المتصفح واختر «تثبيت التطبيق» أو «إضافة الصفحة إلى الشاشة الرئيسية».");
+}
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/service-worker.js").catch(() => {}));
+}
 
 updateUndoButton();
 if (auth) {
