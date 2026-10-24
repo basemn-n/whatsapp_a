@@ -7,6 +7,7 @@ import secrets
 import base64
 import json
 import time
+from datetime import datetime, timedelta, timezone
 import csv
 import io
 from decimal import Decimal
@@ -43,6 +44,29 @@ class MerchantSignup(BaseModel):
 class SignupReview(BaseModel):
     action: str
     reason: str = Field(default="", max_length=500)
+
+
+class StoreGrowthSettingsUpdate(BaseModel):
+    business_id: str
+    shopping_advisor_enabled: bool = True
+    followups_enabled: bool = True
+    followup_delay_hours: int = Field(default=24, ge=1, le=168)
+    loyalty_enabled: bool = True
+    points_per_1000: float = Field(default=1, ge=0, le=100000)
+    point_value_yer: float = Field(default=1, gt=0, le=100000)
+    minimum_redeem_points: int = Field(default=100, ge=1, le=100000000)
+    coupon_expiry_days: int = Field(default=30, ge=1, le=365)
+
+
+class StoreCouponCreate(BaseModel):
+    business_id: str
+    code: str = Field(min_length=3, max_length=40)
+    title: str = Field(default="مكافأة الولاء", min_length=2, max_length=120)
+    points_cost: int = Field(gt=0, le=100000000)
+    discount_amount: float = Field(gt=0, le=100000000)
+    currency: str = Field(default="YER", min_length=3, max_length=3)
+    expiry_days: int = Field(default=30, ge=1, le=365)
+    max_redemptions: int | None = Field(default=None, ge=1, le=100000000)
 
 
 def _merchant_session_secret():
@@ -3048,6 +3072,132 @@ if (auth) {
                 status_code=503,
                 detail="تعذر حفظ تعليمات المساعد. تأكد من تنفيذ ملف ترحيل business_settings في Supabase.",
             )
+
+    @router.get("/api/admin/store-growth-settings")
+    def get_store_growth_settings_route(
+        business_id: str,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _actor)
+        get_business_or_404(business_id)
+        defaults = {
+            "business_id": business_id,
+            "shopping_advisor_enabled": True,
+            "followups_enabled": True,
+            "followup_delay_hours": 24,
+            "loyalty_enabled": True,
+            "points_per_1000": 1,
+            "point_value_yer": 1,
+            "minimum_redeem_points": 100,
+            "coupon_expiry_days": 30,
+        }
+        try:
+            result = (
+                supabase.table("store_growth_settings")
+                .select("business_id,shopping_advisor_enabled,followups_enabled,followup_delay_hours,loyalty_enabled,points_per_1000,point_value_yer,minimum_redeem_points,coupon_expiry_days,updated_at")
+                .eq("business_id", business_id)
+                .limit(1)
+                .execute()
+            )
+            return {"settings": {**defaults, **(result.data[0] if result.data else {})}}
+        except Exception:
+            logger.exception("تعذر تحميل إعدادات النمو والولاء.")
+            raise HTTPException(status_code=503, detail="نفّذ ترحيل store_growth_features في Supabase ثم أعد المحاولة.")
+
+    @router.patch("/api/admin/store-growth-settings")
+    def update_store_growth_settings_route(
+        payload: StoreGrowthSettingsUpdate,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _actor)
+        get_business_or_404(payload.business_id)
+        values = payload.model_dump()
+        values["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            supabase.table("store_growth_settings").upsert(
+                values, on_conflict="business_id"
+            ).execute()
+            saved = (
+                supabase.table("store_growth_settings")
+                .select("*")
+                .eq("business_id", payload.business_id)
+                .limit(1)
+                .execute()
+            )
+            if not saved.data:
+                raise HTTPException(status_code=500, detail="لم يتم تأكيد حفظ الإعدادات.")
+            return {"success": True, "settings": saved.data[0]}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر حفظ إعدادات النمو والولاء.")
+            raise HTTPException(status_code=503, detail="تعذر حفظ الإعدادات. تأكد من تطبيق ترحيل store_growth_features.")
+
+    @router.get("/api/admin/store-coupons")
+    def list_store_coupons(
+        business_id: str,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(business_id, _actor)
+        get_business_or_404(business_id)
+        try:
+            result = (
+                supabase.table("store_coupons")
+                .select("id,business_id,code,title,points_cost,discount_amount,currency,expires_at,max_redemptions,redemption_count,is_active,created_at")
+                .eq("business_id", business_id)
+                .order("created_at", desc=True)
+                .limit(100)
+                .execute()
+            )
+            return {"coupons": result.data or []}
+        except Exception:
+            logger.exception("تعذر تحميل كوبونات المتجر.")
+            raise HTTPException(status_code=503, detail="نفّذ ترحيل store_growth_features في Supabase ثم أعد المحاولة.")
+
+    @router.post("/api/admin/store-coupons")
+    def create_store_coupon(
+        payload: StoreCouponCreate,
+        _actor=Depends(check_admin),
+    ):
+        ensure_business_access(payload.business_id, _actor)
+        get_business_or_404(payload.business_id)
+        code = payload.code.strip().upper()
+        currency = payload.currency.strip().upper()
+        if not code.replace("-", "").replace("_", "").isalnum():
+            raise HTTPException(status_code=400, detail="رمز المكافأة يقبل الحروف والأرقام والشرطة فقط.")
+        if currency not in {"YER", "SAR", "USD", "AED", "EGP"}:
+            raise HTTPException(status_code=400, detail="العملة المحددة غير مدعومة.")
+        values = {
+            "business_id": payload.business_id,
+            "code": code,
+            "title": payload.title.strip(),
+            "points_cost": payload.points_cost,
+            "discount_amount": payload.discount_amount,
+            "currency": currency,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=payload.expiry_days)).isoformat(),
+            "max_redemptions": payload.max_redemptions,
+            "is_active": True,
+        }
+        try:
+            inserted = supabase.table("store_coupons").insert(values).execute()
+            if inserted.data:
+                return {"success": True, "coupon": inserted.data[0]}
+            check = (
+                supabase.table("store_coupons")
+                .select("id,code,title,points_cost,discount_amount,currency,expires_at,max_redemptions,redemption_count,is_active")
+                .eq("business_id", payload.business_id)
+                .eq("code", code)
+                .limit(1)
+                .execute()
+            )
+            if check.data:
+                raise HTTPException(status_code=409, detail="رمز المكافأة مستخدم بالفعل في هذا المتجر.")
+            raise HTTPException(status_code=500, detail="لم يتم تأكيد إنشاء المكافأة.")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر إنشاء كوبون ولاء.")
+            raise HTTPException(status_code=503, detail="تعذر إنشاء المكافأة. تأكد من تطبيق ترحيل store_growth_features.")
 
     @router.get("/api/admin/products")
     def list_products(
