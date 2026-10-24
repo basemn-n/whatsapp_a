@@ -36,12 +36,9 @@ FACEBOOK_VERIFY_TOKEN = os.getenv("FACEBOOK_VERIFY_TOKEN", "").strip()
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "-1003928665915").strip()
-# Explicitly approved product group -> merchant mapping; Render env vars can override.
-TELEGRAM_PRODUCTS_BUSINESS_ID = os.getenv(
-    "TELEGRAM_PRODUCTS_BUSINESS_ID",
-    "68194d49-7ba4-4f49-867e-338b048d63e1",
-).strip()
+# Telegram catalog imports must use an explicit channel_connections mapping.
+# Optional chat ID restricts which groups/channels are considered; it never chooses a store.
+TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
 TELEGRAM_PRODUCTS_CURRENCY = os.getenv("TELEGRAM_PRODUCTS_CURRENCY", "YER").strip().upper()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -1392,33 +1389,40 @@ async def process_telegram_update(update: dict):
             else ""
         )
         source_username = str(source_chat.get("username") or "").casefold()
-        if configured_chat_id and (
+
+        # An optional env setting is only an allow-list for the external channel.
+        # The merchant is ALWAYS resolved from the explicit DB mapping.
+        if configured_chat_id and not (
             configured_chat_id == source_chat_id
             or (configured_username and source_username == configured_username)
         ):
-            try:
-                business_id = await asyncio.to_thread(
-                    get_channel_business_id, "telegram_products", source_chat_id
+            return
+
+        try:
+            business_id = await asyncio.to_thread(
+                get_channel_business_id, "telegram_products", source_chat_id
+            )
+            if not business_id:
+                logger.error(
+                    "Telegram product import skipped: no explicit store mapping for channel %s.",
+                    source_chat_id,
                 )
-                if not business_id:
-                    business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or None
-                if business_id:
-                    result = await asyncio.to_thread(
-                        import_telegram_product_post,
-                        source_post,
-                        supabase,
-                        business_id,
-                        TELEGRAM_PRODUCTS_CURRENCY,
-                    )
-                    logger.info(
-                        "Telegram product channel processed silently: chat_id=%s result=%s",
-                        source_chat_id,
-                        result,
-                    )
-                else:
-                    logger.error("Telegram product import skipped: merchant mapping missing.")
-            except Exception:
-                logger.exception("Failed to import a product from Telegram channel.")
+                return
+
+            result = await asyncio.to_thread(
+                import_telegram_product_post,
+                source_post,
+                supabase,
+                business_id,
+                TELEGRAM_PRODUCTS_CURRENCY,
+            )
+            logger.info(
+                "Telegram product channel processed silently: chat_id=%s result=%s",
+                source_chat_id,
+                result,
+            )
+        except Exception:
+            logger.exception("Failed to import a product from Telegram channel.")
         return
 
     message = update.get("message") or {}
@@ -1426,9 +1430,21 @@ async def process_telegram_update(update: dict):
     chat_id = str(chat.get("id") or "")
     chat_type = str(chat.get("type") or "unknown")
 
-    # In the configured product group: store admins publish products silently;
-    # non-admin customers get replies only when they ask a real product/order question.
-    if chat_type in ("group", "supergroup") and chat_id == TELEGRAM_PRODUCTS_CHAT_ID:
+    # Group replies/imports are allowed only for groups explicitly mapped to a store.
+    # An optional env chat ID narrows the allow-list; it never chooses a business.
+    if chat_type in ("group", "supergroup") and (
+        not TELEGRAM_PRODUCTS_CHAT_ID or chat_id == TELEGRAM_PRODUCTS_CHAT_ID
+    ):
+        business_id = await asyncio.to_thread(
+            get_channel_business_id, "telegram_products", chat_id
+        )
+        if not business_id:
+            logger.info(
+                "Telegram group ignored: no explicit store mapping for chat_id=%s",
+                chat_id,
+            )
+            return
+
         sender = message.get("from") or {}
         sender_id = sender.get("id")
         if sender.get("is_bot") or sender_id is None:
@@ -1438,27 +1454,20 @@ async def process_telegram_update(update: dict):
             is_telegram_group_admin, chat_id, sender_id
         )
         if is_admin is True:
-            # Only verified group admins may publish catalog items. Import silently;
-            # the importer requires explicit product details/pricing before saving.
+            # Only verified group admins may publish catalog items. Import silently.
             try:
-                business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or await asyncio.to_thread(
-                    get_channel_business_id, "telegram_products", chat_id
+                result = await asyncio.to_thread(
+                    import_telegram_product_post,
+                    message,
+                    supabase,
+                    business_id,
+                    TELEGRAM_PRODUCTS_CURRENCY,
                 )
-                if business_id:
-                    result = await asyncio.to_thread(
-                        import_telegram_product_post,
-                        message,
-                        supabase,
-                        business_id,
-                        TELEGRAM_PRODUCTS_CURRENCY,
-                    )
-                    logger.info(
-                        "Telegram admin product post imported silently: sender=%s result=%s",
-                        sender_id,
-                        result,
-                    )
-                else:
-                    logger.error("Telegram group product import skipped: merchant mapping missing.")
+                logger.info(
+                    "Telegram admin product post imported silently: sender=%s result=%s",
+                    sender_id,
+                    result,
+                )
             except Exception:
                 logger.exception("Failed to import a product from Telegram group.")
             return
@@ -1472,15 +1481,7 @@ async def process_telegram_update(update: dict):
 
         user_text = str(message.get("text") or message.get("caption") or "").strip()
         # Product posts from customers are not imported; only admins can publish catalog items.
-        # Customer questions and requests are handled below without collecting personal data in public.
         if not is_customer_question_or_request(user_text):
-            return
-
-        business_id = TELEGRAM_PRODUCTS_BUSINESS_ID or await asyncio.to_thread(
-            get_channel_business_id, "telegram_products", chat_id
-        )
-        if not business_id:
-            logger.error("Telegram group customer reply skipped: merchant mapping missing.")
             return
 
         sender_name = str(sender.get("first_name") or "عميل").strip()
@@ -1500,45 +1501,20 @@ async def process_telegram_update(update: dict):
             )
         else:
             context = await asyncio.to_thread(get_business_context, business_id)
-            try:
-                reply_text = await asyncio.to_thread(
-                    generate_ai_response,
-                    f"telegram_group_{chat_id}_{sender_id}",
-                    user_text,
-                    None,
-                    context,
-                    f"telegram_group_{chat_id}_{sender_id}_{business_id}",
-                    business_id,
-                )
-            except Exception:
-                logger.exception("Failed to answer a Telegram group customer question.")
-                reply_text = (
-                    "شكرًا لاستفسارك. للحصول على تفاصيل المنتج أو إتمام الطلب، "
-                    "يُرجى مراسلتنا عبر الخاص بالضغط على اسم البوت ثم Start."
-                )
-
-        try:
-            await asyncio.to_thread(
-                telegram_api,
-                "sendMessage",
-                {
-                    "chat_id": chat_id,
-                    "text": reply_text,
-                    "reply_to_message_id": int(reply_to) if reply_to is not None else None,
-                    "allow_sending_without_reply": True,
-                },
-                20,
+            if not context:
+                logger.error("Telegram group reply skipped: mapped store context unavailable.")
+                return
+            reply_text = await asyncio.to_thread(
+                generate_ai_response,
+                f"telegram_group_{chat_id}_{sender_id}",
+                user_text,
+                None,
+                context,
+                f"telegram_group_{chat_id}_{sender_id}_{business_id}",
+                business_id,
             )
-        except Exception:
-            logger.exception("Failed to send Telegram group customer reply.")
-        return
 
-    if chat_type != "private":
-        logger.info(
-            "Telegram message ignored outside configured product group: chat_id=%s type=%s",
-            chat_id,
-            chat_type,
-        )
+        await send_telegram_message(chat_id, reply_text)
         return
 
     # Private chat: bind the customer to the store from the bot deep-link,
@@ -1549,13 +1525,14 @@ async def process_telegram_update(update: dict):
 
     if user_text.startswith("/start"):
         parts = user_text.split(maxsplit=1)
-        # Telegram may deliver a plain /start when a customer opens the bot
-        # directly or has already started it. Use the explicitly configured
-        # product-store mapping only when no deep-link payload was supplied.
-        # A supplied payload always takes precedence to preserve multi-store routing.
+        # A deep-link payload identifies the intended store. A bare /start may
+        # reuse this customer's existing store binding, but must never choose a default store.
         business_id = parts[1].strip() if len(parts) > 1 else ""
         if not business_id:
-            business_id = TELEGRAM_PRODUCTS_BUSINESS_ID
+            # A bare /start must not silently attach the customer to a default store.
+            business_id = await asyncio.to_thread(
+                get_telegram_business_id, private_chat_id
+            ) or ""
 
         if business_id and await asyncio.to_thread(
             save_telegram_business, private_chat_id, business_id
@@ -1575,7 +1552,7 @@ async def process_telegram_update(update: dict):
                 "Telegram /start could not bind customer: chat_id=%s payload_supplied=%s configured_business=%s",
                 private_chat_id,
                 len(parts) > 1,
-                bool(TELEGRAM_PRODUCTS_BUSINESS_ID),
+                bool(business_id),
             )
             await send_telegram_message(
                 private_chat_id,
