@@ -1187,6 +1187,7 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
 <th>الهاتف</th>
 <th>العنوان</th>
 <th>الدفع</th>
+<th>الخصم / الإجمالي</th>
 <th>الحالة</th>
 <th>حفظ</th>
 </tr>
@@ -1343,6 +1344,7 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <h4>قيمة الطلبات التي تم تسليمها (المبيعات)</h4>
 <p><strong>المبيعات المحفوظة للطلبات المسلّمة:</strong> <span id="realizedRevenue">—</span></p>
 <p><strong>إجمالي القطع المسلّمة:</strong> <span id="deliveredQuantity">—</span></p>
+<p><strong>إجمالي الخصومات على الطلبات المسلّمة:</strong> <span id="deliveredDiscountTotal">—</span></p>
 <p>المبيعات المحفوظة هي المبالغ المسجلة وقت الطلب، ولا تشمل التقديرات أو الطلبات غير المسلّمة.</p>
 <p id="exactRevenue">المبيعات الدقيقة: —</p>
 <p id="estimatedRevenue">المبيعات التقديرية للطلبات القديمة: —</p>
@@ -2204,7 +2206,7 @@ function renderOrders() {
   if (visibleOrders.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 9;
+    td.colSpan = 10;
     td.textContent = "لا توجد طلبات تطابق البحث أو التصفية.";
     tr.appendChild(td);
     rows.appendChild(tr);
@@ -2222,6 +2224,16 @@ function renderOrders() {
       order.customer_address,
       order.payment_method
     ].forEach(value => tr.appendChild(cell(value)));
+
+    const discountAmount = Number(order.discount_amount || 0);
+    const orderCurrency = order.currency || "YER";
+    const totalAmount = order.total_price == null
+      ? "غير محفوظ"
+      : Number(order.total_price).toLocaleString("ar", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + orderCurrency;
+    const discountCellText = (discountAmount > 0
+      ? "خصم " + discountAmount.toLocaleString("ar", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + orderCurrency + " | "
+      : "") + "الإجمالي " + totalAmount;
+    tr.appendChild(cell(discountCellText));
 
     const statusCell = document.createElement("td");
     const select = document.createElement("select");
@@ -2353,6 +2365,7 @@ async function loadReports() {
     document.getElementById("reportCancelledOrders").textContent = data.cancelled_orders ?? 0;
     document.getElementById("realizedRevenue").textContent = formatMoneyGroups(data.exact_revenue);
     document.getElementById("deliveredQuantity").textContent = Number(data.delivered_quantity ?? 0).toLocaleString("ar");
+    document.getElementById("deliveredDiscountTotal").textContent = formatMoneyGroups(data.delivered_discount_total);
     document.getElementById("exactRevenue").textContent =
       "المبيعات الدقيقة للطلبات المسلّمة: " + formatMoneyGroups(data.exact_revenue);
     document.getElementById("estimatedRevenue").textContent =
@@ -4136,6 +4149,7 @@ if (auth) {
                 "cancelled_orders": 0,
             }
             delivered_quantity = 0
+            delivered_discount_total = {}
             exact_revenue = {}
             estimated_revenue = {}
             missing_price_orders = 0
@@ -4157,6 +4171,15 @@ if (auth) {
                             delivered_quantity += quantity_value
                     except (TypeError, ValueError):
                         logger.warning("Invalid quantity in delivered order %s", order.get("order_number"))
+                    try:
+                        discount_value = max(0, float(order.get("discount_amount") or 0))
+                        if discount_value > 0:
+                            discount_currency = order.get("currency") or "YER"
+                            delivered_discount_total[discount_currency] = round(
+                                delivered_discount_total.get(discount_currency, 0) + discount_value, 2
+                            )
+                    except (TypeError, ValueError):
+                        logger.warning("Invalid discount amount in delivered order %s", order.get("order_number"))
                 elif status == "cancelled":
                     counts["cancelled_orders"] += 1
 
@@ -4205,6 +4228,7 @@ if (auth) {
                 "total_orders": len(orders),
                 **counts,
                 "delivered_quantity": delivered_quantity,
+                "delivered_discount_total": delivered_discount_total,
                 "exact_revenue": exact_revenue,
                 "estimated_revenue": estimated_revenue,
                 "missing_price_orders": missing_price_orders,
@@ -4232,7 +4256,8 @@ if (auth) {
                 supabase.table("orders")
                 .select(
                     "order_number, created_at, customer_name, product_name, "
-                    "quantity, status, total_price, currency, payment_method"
+                    "quantity, status, subtotal_price, discount_amount, discount_code, "
+                    "total_price, currency, payment_method"
                 )
                 .eq("business_id", business_id)
                 .order("created_at", desc=True)
@@ -4243,7 +4268,8 @@ if (auth) {
             writer = csv.writer(output)
             writer.writerow([
                 "رقم الطلب", "تاريخ الإنشاء", "اسم العميل", "المنتج",
-                "الكمية", "الحالة", "الإجمالي المحفوظ", "العملة", "طريقة الدفع",
+                "الكمية", "الحالة", "المجموع قبل الخصم", "قيمة الخصم",
+                "رمز الخصم", "الإجمالي بعد الخصم", "العملة", "طريقة الدفع",
             ])
 
             def safe_csv_text(value):
@@ -4261,6 +4287,9 @@ if (auth) {
                     safe_csv_text(order.get("product_name")),
                     safe_csv_text(order.get("quantity")),
                     safe_csv_text(order.get("status")),
+                    safe_csv_text(order.get("subtotal_price")),
+                    safe_csv_text(order.get("discount_amount")),
+                    safe_csv_text(order.get("discount_code")),
                     safe_csv_text(order.get("total_price")),
                     safe_csv_text(order.get("currency")),
                     safe_csv_text(order.get("payment_method")),
