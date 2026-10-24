@@ -346,7 +346,7 @@ def get_store_growth_settings(business_id: str):
         "loyalty_enabled": True,
         "points_per_1000": 1,
         "point_value_yer": 1,
-        "minimum_redeem_points": 100,
+        "minimum_redeem_points": 20,
         "coupon_expiry_days": 30,
     }
     if not supabase or not business_id:
