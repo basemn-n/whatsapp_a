@@ -769,6 +769,7 @@ def save_telegram_order(chat_id: int, order_data: dict):
                 "p_product_id": order_data["product_id"],
                 "p_quantity": quantity,
                 "p_telegram_chat_id": str(chat_id),
+                "p_redemption_code": (order_data.get("redemption_code") or None),
             },
         ).execute()
 
@@ -788,6 +789,10 @@ def save_telegram_order(chat_id: int, order_data: dict):
                 }
             if reason == "product_unavailable":
                 return {"error": "product_unavailable"}
+            if reason == "coupon_invalid":
+                return {"error": "coupon_invalid"}
+            if reason == "coupon_currency_mismatch":
+                return {"error": "coupon_currency_mismatch"}
             logger.error("تعذر تسجيل الطلب عبر الوظيفة الذرية: %s", reason)
             return None
 
@@ -796,6 +801,11 @@ def save_telegram_order(chat_id: int, order_data: dict):
         return {
             "order_number": saved_order.get("order_number"),
             "status": saved_order.get("status", "pending"),
+            "subtotal_price": saved_order.get("subtotal_price"),
+            "discount_amount": saved_order.get("discount_amount", 0),
+            "total_price": saved_order.get("total_price"),
+            "currency": saved_order.get("currency") or "YER",
+            "discount_code": saved_order.get("discount_code"),
         }
 
     except Exception:
@@ -839,6 +849,46 @@ def begin_telegram_order(chat_id: int, business_id: str, user_text: str):
         + "\n".join(product_lines)
         + "\n\nأرسل اسم المنتج كما يظهر في القائمة، أو أرسل /cancel للإلغاء."
     )
+
+
+def format_telegram_order_confirmation(state: dict):
+    """Show an estimate only; the database RPC recalculates prices atomically."""
+    quantity = parse_quantity(str(state.get("quantity", 1))) or 1
+    products = get_available_products(str(state.get("business_id") or ""))
+    product = next(
+        (item for item in products if str(item.get("id")) == str(state.get("product_id"))),
+        None,
+    )
+    unit_price = float((product or {}).get("price") or 0)
+    subtotal = round(unit_price * quantity, 2)
+    currency = (product or {}).get("currency") or "YER"
+    raw_discount = float(state.get("coupon_discount_amount") or 0)
+    discount = min(max(raw_discount, 0), subtotal) if state.get("redemption_code") else 0
+    total = max(0, round(subtotal - discount, 2))
+    state["preview_subtotal_price"] = subtotal
+    state["preview_discount_amount"] = discount
+    state["preview_total_price"] = total
+    lines = [
+        "يرجى مراجعة تفاصيل طلبك:",
+        "",
+        f"المنتج: {state.get('product_name')}",
+        f"الكمية: {quantity}",
+        f"الاسم: {state.get('customer_name')}",
+        f"الهاتف: {state.get('customer_phone')}",
+        f"العنوان: {state.get('customer_address')}",
+        f"طريقة الدفع المطلوبة: {state.get('payment_method')}",
+        f"المجموع قبل الخصم: {subtotal:,.2f} {currency}",
+    ]
+    if state.get("redemption_code"):
+        lines.append(f"رمز الخصم: {state.get('redemption_code')}")
+        lines.append(f"الخصم: {discount:,.2f} {currency}")
+    lines.extend([
+        f"الإجمالي بعد الخصم: {total:,.2f} {currency}",
+        "",
+        "هل تؤكد رغبتك في تسجيل الطلب؟",
+        "أرسل نعم للتأكيد أو لا للإلغاء.",
+    ])
+    return "\n".join(lines)
 
 
 def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
@@ -1007,20 +1057,54 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         with order_lock:
             state["payment_method"] = text
-            state["stage"] = "confirmation"
+            state["stage"] = "coupon_code"
         persist_pending_telegram_order(chat_id, state)
 
         return (
-            "يرجى مراجعة تفاصيل طلبك:\n\n"
-            f"المنتج: {state['product_name']}\n"
-            f"الكمية: {state['quantity']}\n"
-            f"الاسم: {state['customer_name']}\n"
-            f"الهاتف: {state['customer_phone']}\n"
-            f"العنوان: {state['customer_address']}\n"
-            f"طريقة الدفع المطلوبة: {state['payment_method']}\n\n"
-            "هل تؤكد رغبتك في تسجيل الطلب؟\n"
-            "أرسل نعم للتأكيد أو لا للإلغاء."
+            "هل لديك رمز خصم حصلت عليه من مكافأة الولاء؟\n"
+            "أرسل رمز الخصم الخاص بك، أو أرسل «لا» للمتابعة دون خصم."
         )
+
+    if stage == "coupon_code":
+        no_values = ("لا", "لا يوجد", "بدون", "تخطي", "no", "skip", "none")
+        if normalized in no_values:
+            state.pop("redemption_code", None)
+            state.pop("coupon_discount_amount", None)
+            state.pop("coupon_currency", None)
+            with order_lock:
+                state["stage"] = "confirmation"
+            persist_pending_telegram_order(chat_id, state)
+            return format_telegram_order_confirmation(state)
+
+        if not supabase:
+            return "تعذر التحقق من رمز الخصم الآن. حاول لاحقًا أو أرسل «لا» للمتابعة دون خصم."
+        try:
+            coupon_result = (
+                supabase.table("store_coupon_redemptions")
+                .select("redemption_code, discount_amount, currency, expires_at, status")
+                .eq("business_id", state["business_id"])
+                .eq("customer_external_id", str(chat_id))
+                .eq("redemption_code", text.strip().upper())
+                .eq("status", "issued")
+                .gt("expires_at", datetime.now(timezone.utc).isoformat())
+                .limit(1)
+                .execute()
+            )
+            redemption = (coupon_result.data or [None])[0]
+        except Exception:
+            logger.exception("Failed to validate store coupon redemption code.")
+            return "تعذر التحقق من رمز الخصم الآن. حاول مجددًا أو أرسل «لا» للمتابعة دون خصم."
+
+        if not redemption:
+            return "رمز الخصم غير صالح أو منتهي أو مستخدم، أو لا يخص هذا المتجر/حسابك. أرسل الرمز الصحيح أو «لا»."
+
+        with order_lock:
+            state["redemption_code"] = redemption["redemption_code"]
+            state["coupon_discount_amount"] = float(redemption.get("discount_amount") or 0)
+            state["coupon_currency"] = redemption.get("currency") or "YER"
+            state["stage"] = "confirmation"
+        persist_pending_telegram_order(chat_id, state)
+        return format_telegram_order_confirmation(state)
 
     if stage == "confirmation":
         yes_values = (
@@ -1063,6 +1147,18 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
                     "لم يتم تسجيل الطلب. يمكنك اختيار منتج آخر."
                 )
 
+            if isinstance(saved, dict) and saved.get("error") in ("coupon_invalid", "coupon_currency_mismatch"):
+                state.pop("redemption_code", None)
+                state.pop("coupon_discount_amount", None)
+                state.pop("coupon_currency", None)
+                with order_lock:
+                    state["stage"] = "coupon_code"
+                persist_pending_telegram_order(chat_id, state)
+                return (
+                    "لم يُسجّل الطلب لأن رمز الخصم لم يعد صالحًا أو لا تتوافق عملته مع المنتج. "
+                    "أرسل رمزًا صالحًا آخر أو «لا» للمتابعة دون خصم."
+                )
+
             if not saved:
                 return (
                     "لم أتمكن من تسجيل الطلب في قاعدة البيانات، "
@@ -1074,10 +1170,20 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
             cancel_customer_followup(state.get("business_id"), chat_id)
             clear_pending_telegram_order(chat_id)
 
+            total_text = (
+                f"الإجمالي بعد الخصم: {float(saved.get('total_price') or 0):,.2f} "
+                f"{saved.get('currency') or 'YER'}"
+            )
+            discount_value = float(saved.get("discount_amount") or 0)
+            discount_text = (
+                f"\nالخصم المطبق: {discount_value:,.2f} {saved.get('currency') or 'YER'}"
+                if discount_value > 0 else ""
+            )
             return (
                 "تم تسجيل طلبك بنجاح في النظام. ✅\n\n"
                 f"رقم الطلب: {saved.get('order_number')}\n"
-                f"الحالة: {saved.get('status')}\n\n"
+                f"الحالة: {saved.get('status')}\n"
+                f"{total_text}{discount_text}\n\n"
                 "تم حجز الكمية المطلوبة من المخزون. الحالة الحالية هي قيد المراجعة، "
                 "وليست تأكيدًا للتوصيل أو استلام الدفع."
             )
@@ -1942,7 +2048,7 @@ async def process_telegram_update(update: dict):
             if isinstance(redeemed, dict) and redeemed.get("success"):
                 await send_telegram_message(
                     private_chat_id,
-                    f"تم استبدال النقاط بنجاح! 🎉\nالمكافأة: {redeemed.get('title') or redeemed.get('code')}\nقيمة الخصم المسجلة: {redeemed.get('discount_amount')} {redeemed.get('currency') or 'YER'}\nتنتهي المكافأة: {redeemed.get('expires_at')}\nأظهر هذا الرمز للمتجر عند إتمام الشراء."
+                    f"تم استبدال نقاطك بنجاح! 🎉\nالمكافأة: {redeemed.get('title') or redeemed.get('code')}\nرمز الخصم الخاص بك: {redeemed.get('redemption_code')}\nقيمة الخصم: {redeemed.get('discount_amount')} {redeemed.get('currency') or 'YER'}\nصلاحية الرمز حتى: {redeemed.get('expires_at')}\n\nالخصم لم يُطبّق على طلب بعد. عند تسجيل الطلب، أرسل هذا الرمز في خطوة الخصم؛ يُستخدم مرة واحدة فقط."
                 )
             else:
                 reason = redeemed.get("reason") if isinstance(redeemed, dict) else None
