@@ -1915,7 +1915,7 @@ async def process_telegram_update(update: dict):
         reply = format_loyalty_summary(
             account.get("points_balance", 0),
             account.get("lifetime_points", 0),
-            settings.get("minimum_redeem_points", 100),
+            settings.get("minimum_redeem_points", 20),
             settings.get("point_value_yer", 1),
         )
         reply += "\n\nتُضاف النقاط بعد تحويل الطلب إلى «تم التسليم» فقط. لاستبدال نقاطك أرسل /coupon متبوعًا برمز المكافأة."
