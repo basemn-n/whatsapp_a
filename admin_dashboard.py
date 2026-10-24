@@ -1075,6 +1075,7 @@ td select{max-width:220px;min-width:170px;background:white} td button{white-spac
     </div>
     <div class="dashboard-tree-group">▾ إعدادات وخدمات</div>
     <button id="settingsTab" class="dashboard-tree-item" onclick="showTab('settings')"><span>⚙</span> إعدادات المتجر والمساعد</button>
+    <button id="growthTab" class="dashboard-tree-item" onclick="showTab('growth')"><span>🎁</span> مستشار الشراء والولاء</button>
     <button id="requestsTab" class="dashboard-tree-item hidden" onclick="showTab('requests')"><span>👥</span> طلبات التجار</button>
     <button id="aiUsageTab" class="dashboard-tree-item hidden" onclick="showTab('ai-usage')"><span>🤖</span> استخدام الذكاء الاصطناعي</button>
     <div class="dashboard-tree-note">اختر قسمًا من القائمة لعرض بياناته وأدواته فقط.</div>
@@ -1351,6 +1352,42 @@ onclick="resetProductForm()">إلغاء التعديل</button>
 <p id="cancelledEstimatedValue">تقدير الطلبات الملغاة القديمة: —</p>
 <p id="cancelledMissingValue">طلبات ملغاة بلا سعر يمكن حسابه: —</p>
 </div>
+</section>
+
+<section id="growthPanel" class="panel hidden">
+  <h3>مستشار الشراء واستعادة العملاء والولاء</h3>
+  <p>كل إعداد هنا يخص المتجر المحدد فقط. التذكيرات لا تُرسل إلا بعد موافقة العميل، ومرة واحدة لكل استفسار غير مكتمل. تُضاف نقاط الولاء عند تسليم الطلب فقط.</p>
+  <form id="storeGrowthSettingsForm">
+    <div class="grid">
+      <div><label><input id="growthAdvisorEnabled" type="checkbox" style="width:auto"> تفعيل مستشار الشراء الذكي</label><small>يقارن المنتجات المسجلة فقط ويطلب توضيحًا عند الحاجة.</small></div>
+      <div><label><input id="growthFollowupsEnabled" type="checkbox" style="width:auto"> تفعيل تذكيرات العملاء</label><small>لا يعمل دون موافقة العميل الصريحة.</small></div>
+      <div><label for="growthFollowupDelay">مدة الانتظار قبل التذكير (ساعة)</label><input id="growthFollowupDelay" type="number" min="1" max="168" required></div>
+      <div><label><input id="growthLoyaltyEnabled" type="checkbox" style="width:auto"> تفعيل برنامج الولاء</label><small>تُحتسب النقاط للطلبات المسلّمة فقط.</small></div>
+      <div><label for="growthPointsRate">النقاط لكل 1000 من قيمة الطلب</label><input id="growthPointsRate" type="number" min="0" max="100000" step="0.1" required></div>
+      <div><label for="growthPointValue">القيمة الحسابية للنقطة</label><input id="growthPointValue" type="number" min="0.0001" step="0.01" required></div>
+      <div><label for="growthMinimumPoints">الحد الأدنى لاستبدال النقاط</label><input id="growthMinimumPoints" type="number" min="1" required></div>
+      <div><label for="growthCouponExpiry">مدة انتهاء المكافأة الافتراضية (يوم)</label><input id="growthCouponExpiry" type="number" min="1" max="365" required></div>
+    </div>
+    <div class="form-actions"><button type="submit">حفظ إعدادات الميزات</button><button type="button" class="secondary" onclick="loadStoreGrowth()">إعادة تحميل</button></div>
+  </form>
+  <hr>
+  <h3>إنشاء كوبون مكافأة</h3>
+  <p>حدد تكلفة النقاط وقيمة الخصم ومدة الصلاحية. رمز الكوبون فريد داخل هذا المتجر ولا يمكن استخدامه بعد انتهاء صلاحيته أو بلوغ حد الاستخدام.</p>
+  <form id="storeCouponForm">
+    <div class="grid">
+      <div><label for="couponCode">رمز المكافأة</label><input id="couponCode" required minlength="3" maxlength="40" pattern="[A-Za-z0-9_-]+" placeholder="LOYAL100"></div>
+      <div><label for="couponTitle">اسم المكافأة</label><input id="couponTitle" required minlength="2" maxlength="120" value="مكافأة الولاء"></div>
+      <div><label for="couponPointsCost">النقاط المطلوبة</label><input id="couponPointsCost" type="number" min="1" required></div>
+      <div><label for="couponDiscount">قيمة الخصم</label><input id="couponDiscount" type="number" min="0.01" step="0.01" required></div>
+      <div><label for="couponCurrency">العملة</label><select id="couponCurrency"><option value="YER">ريال يمني (YER)</option><option value="SAR">ريال سعودي (SAR)</option><option value="USD">دولار أمريكي (USD)</option><option value="AED">درهم إماراتي (AED)</option><option value="EGP">جنيه مصري (EGP)</option></select></div>
+      <div><label for="couponExpiryDays">الصلاحية (يوم)</label><input id="couponExpiryDays" type="number" min="1" max="365" required value="30"></div>
+      <div><label for="couponMaxRedemptions">أقصى عدد استخدامات (اختياري)</label><input id="couponMaxRedemptions" type="number" min="1" placeholder="اتركه فارغًا بلا حد"></div>
+    </div>
+    <div class="form-actions"><button type="submit">إنشاء المكافأة</button></div>
+  </form>
+  <h3 style="margin-top:24px">مكافآت هذا المتجر</h3>
+  <div class="toolbar"><button type="button" class="secondary" onclick="loadStoreCoupons()">تحديث المكافآت</button></div>
+  <div class="wrap"><table style="min-width:780px"><thead><tr><th>الرمز</th><th>المكافأة</th><th>النقاط</th><th>الخصم</th><th>الاستخدام</th><th>تنتهي</th><th>الحالة</th></tr></thead><tbody id="storeCouponRows"><tr><td colspan="7">سجّل الدخول لعرض المكافآت.</td></tr></tbody></table></div>
 </section>
 
 <section id="aiUsagePanel" class="panel hidden">
@@ -1655,6 +1692,8 @@ function showTab(tab) {
     .classList.toggle("hidden", tab !== "reports");
   document.getElementById("settingsPanel")
     .classList.toggle("hidden", tab !== "settings");
+  document.getElementById("growthPanel")
+    .classList.toggle("hidden", tab !== "growth");
   document.getElementById("requestsPanel")
     .classList.toggle("hidden", tab !== "requests");
   document.getElementById("aiUsagePanel")
@@ -1672,6 +1711,8 @@ function showTab(tab) {
     .classList.toggle("active", tab === "reports");
   document.getElementById("settingsTab")
     .classList.toggle("active", tab === "settings");
+  document.getElementById("growthTab")
+    .classList.toggle("active", tab === "growth");
   document.getElementById("requestsTab")
     .classList.toggle("active", tab === "requests");
   document.getElementById("aiUsageTab")
@@ -1689,10 +1730,109 @@ function showTab(tab) {
     loadReports();
   } else if (tab === "settings") {
     loadBusinessProfile();
+  } else if (tab === "growth") {
+    loadStoreGrowth();
+    loadStoreCoupons();
   } else {
     loadOrders();
   }
 }
+
+async function loadStoreGrowth() {
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) return;
+  try {
+    const data = await api("/api/admin/store-growth-settings?business_id=" + encodeURIComponent(businessId));
+    const s = data.settings || {};
+    document.getElementById("growthAdvisorEnabled").checked = Boolean(s.shopping_advisor_enabled);
+    document.getElementById("growthFollowupsEnabled").checked = Boolean(s.followups_enabled);
+    document.getElementById("growthFollowupDelay").value = s.followup_delay_hours ?? 24;
+    document.getElementById("growthLoyaltyEnabled").checked = Boolean(s.loyalty_enabled);
+    document.getElementById("growthPointsRate").value = s.points_per_1000 ?? 1;
+    document.getElementById("growthPointValue").value = s.point_value_yer ?? 1;
+    document.getElementById("growthMinimumPoints").value = s.minimum_redeem_points ?? 100;
+    document.getElementById("growthCouponExpiry").value = s.coupon_expiry_days ?? 30;
+    document.getElementById("couponExpiryDays").value = s.coupon_expiry_days ?? 30;
+  } catch (error) {
+    setMessage(error.message || "تعذر تحميل إعدادات الميزات.");
+  }
+}
+
+document.getElementById("storeGrowthSettingsForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) return;
+  const payload = {
+    business_id: businessId,
+    shopping_advisor_enabled: document.getElementById("growthAdvisorEnabled").checked,
+    followups_enabled: document.getElementById("growthFollowupsEnabled").checked,
+    followup_delay_hours: Number(document.getElementById("growthFollowupDelay").value),
+    loyalty_enabled: document.getElementById("growthLoyaltyEnabled").checked,
+    points_per_1000: Number(document.getElementById("growthPointsRate").value),
+    point_value_yer: Number(document.getElementById("growthPointValue").value),
+    minimum_redeem_points: Number(document.getElementById("growthMinimumPoints").value),
+    coupon_expiry_days: Number(document.getElementById("growthCouponExpiry").value)
+  };
+  try {
+    await api("/api/admin/store-growth-settings", {method:"PATCH", body:JSON.stringify(payload)});
+    setMessage("تم حفظ إعدادات مستشار الشراء والتذكيرات والولاء لهذا المتجر.");
+    await loadStoreGrowth();
+  } catch (error) {
+    setMessage(error.message || "تعذر حفظ الإعدادات.");
+  }
+});
+
+async function loadStoreCoupons() {
+  const businessId = document.getElementById("businessSelect").value;
+  const tbody = document.getElementById("storeCouponRows");
+  if (!businessId || !tbody) return;
+  tbody.replaceChildren();
+  try {
+    const data = await api("/api/admin/store-coupons?business_id=" + encodeURIComponent(businessId));
+    const coupons = data.coupons || [];
+    if (!coupons.length) {
+      const row = document.createElement("tr"); const td = cell("لا توجد مكافآت منشأة لهذا المتجر بعد."); td.colSpan = 7; row.appendChild(td); tbody.appendChild(row); return;
+    }
+    for (const coupon of coupons) {
+      const row = document.createElement("tr");
+      row.appendChild(cell(coupon.code));
+      row.appendChild(cell(coupon.title));
+      row.appendChild(cell(coupon.points_cost));
+      row.appendChild(cell(String(coupon.discount_amount) + " " + coupon.currency));
+      row.appendChild(cell(String(coupon.redemption_count || 0) + (coupon.max_redemptions ? " / " + coupon.max_redemptions : " / بلا حد")));
+      row.appendChild(cell(coupon.expires_at ? new Date(coupon.expires_at).toLocaleDateString("ar") : "—"));
+      row.appendChild(cell(coupon.is_active && new Date(coupon.expires_at) > new Date() ? "فعالة" : "منتهية/متوقفة"));
+      tbody.appendChild(row);
+    }
+  } catch (error) {
+    const row = document.createElement("tr"); const td = cell(error.message || "تعذر تحميل المكافآت."); td.colSpan = 7; row.appendChild(td); tbody.appendChild(row);
+  }
+}
+
+document.getElementById("storeCouponForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const businessId = document.getElementById("businessSelect").value;
+  if (!businessId) return;
+  const maxRaw = document.getElementById("couponMaxRedemptions").value.trim();
+  const payload = {
+    business_id: businessId,
+    code: document.getElementById("couponCode").value.trim(),
+    title: document.getElementById("couponTitle").value.trim(),
+    points_cost: Number(document.getElementById("couponPointsCost").value),
+    discount_amount: Number(document.getElementById("couponDiscount").value),
+    currency: document.getElementById("couponCurrency").value,
+    expiry_days: Number(document.getElementById("couponExpiryDays").value),
+    max_redemptions: maxRaw ? Number(maxRaw) : null
+  };
+  try {
+    await api("/api/admin/store-coupons", {method:"POST", body:JSON.stringify(payload)});
+    setMessage("تم إنشاء مكافأة الولاء لهذا المتجر.");
+    document.getElementById("storeCouponForm").reset();
+    await loadStoreCoupons();
+  } catch (error) {
+    setMessage(error.message || "تعذر إنشاء المكافأة.");
+  }
+});
 
 async function updateMerchantSetupChecklist(businessId, productCount) {
   const list = document.getElementById("merchantSetupSteps");
