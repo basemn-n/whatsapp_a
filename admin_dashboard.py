@@ -968,7 +968,9 @@ window.addEventListener("appinstalled", () => {{
 }});
 if ("serviceWorker" in navigator && location.protocol === "https:") {{
   window.addEventListener("load", () => {{
-    navigator.serviceWorker.register("/service-worker.js", {{updateViaCache: "none"}})
+    const swOptions = Object.create(null);
+    swOptions.updateViaCache = "none";
+    navigator.serviceWorker.register("/service-worker.js", swOptions)
       .then(registration => registration.update())
       .catch(() => {{}});
   }});
@@ -3384,7 +3386,9 @@ async function installStoreApp() {
 }
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/service-worker.js", {{updateViaCache: "none"}})
+    const swOptions = Object.create(null);
+    swOptions.updateViaCache = "none";
+    navigator.serviceWorker.register("/service-worker.js", swOptions)
       .then(registration => registration.update())
       .catch(() => {});
   });
