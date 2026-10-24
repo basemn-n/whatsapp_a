@@ -792,7 +792,6 @@ def save_telegram_order(chat_id: int, order_data: dict):
             return None
 
         saved_order = payload.get("order") or {}
-        cancel_customer_followup(business_id, chat_id)
 
         return {
             "order_number": saved_order.get("order_number"),
