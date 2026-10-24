@@ -141,6 +141,51 @@ def ensure_business_access(business_id, actor):
         )
 
 
+def products_without_recent_deliveries(products, delivered_orders):
+    """Return available products with no recent delivered order, using product IDs first.
+
+    Legacy orders without product_id are matched by name only when that name is
+    unique within the current store. Ambiguous legacy matches are omitted from
+    the warning list instead of incorrectly claiming those products had no sales.
+    """
+    products_by_name = {}
+    for product in products:
+        name_key = str(product.get("name") or "").strip().casefold()
+        product_id = str(product.get("id") or "").strip()
+        if name_key and product_id:
+            products_by_name.setdefault(name_key, []).append(product_id)
+
+    delivered_product_ids = set()
+    ambiguous_legacy_names = set()
+    for order in delivered_orders:
+        product_id = str(order.get("product_id") or "").strip()
+        if product_id:
+            delivered_product_ids.add(product_id)
+            continue
+
+        name_key = str(order.get("product_name") or "").strip().casefold()
+        if not name_key:
+            continue
+        matching_ids = products_by_name.get(name_key, [])
+        if len(matching_ids) == 1:
+            delivered_product_ids.add(matching_ids[0])
+        elif len(matching_ids) > 1:
+            ambiguous_legacy_names.add(name_key)
+
+    result = []
+    for product in products:
+        if not product.get("is_available"):
+            continue
+        product_id = str(product.get("id") or "").strip()
+        name_key = str(product.get("name") or "").strip().casefold()
+        if product_id in delivered_product_ids or name_key in ambiguous_legacy_names:
+            continue
+        result.append(product.get("name") or "منتج دون اسم")
+        if len(result) >= 10:
+            break
+    return result
+
+
 STATUSES = {
     "pending": "قيد المراجعة",
     "approved": "تمت الموافقة",
@@ -3650,23 +3695,18 @@ if (auth) {
             week_revenue, week_exact, week_missing = grouped_revenue(week_orders)
             prev_revenue, _, _ = grouped_revenue(previous_week_orders)
 
-            delivered_by_product = {}
-            for order in last_30:
-                if order.get("status") == "delivered":
-                    key = str(order.get("product_name") or "").strip().casefold()
-                    if key:
-                        delivered_by_product[key] = delivered_by_product.get(key, 0) + int(order.get("quantity") or 0)
+            delivered_orders_last_30 = [
+                order for order in last_30 if order.get("status") == "delivered"
+            ]
 
             low_stock = [
                 {"name": p.get("name") or "منتج دون اسم", "stock_quantity": p.get("stock_quantity"), "is_available": p.get("is_available")}
                 for p in products
                 if not p.get("is_available") or (p.get("stock_quantity") is not None and int(p.get("stock_quantity") or 0) <= 3)
             ]
-            slow_products = [
-                p.get("name") or "منتج دون اسم" for p in products
-                if str(p.get("name") or "").strip().casefold() not in delivered_by_product
-                and p.get("is_available")
-            ][:10]
+            slow_products = products_without_recent_deliveries(
+                products, delivered_orders_last_30
+            )
             pending_count = sum(1 for o in orders if o.get("status") in ("pending", "approved"))
             processing_count = sum(1 for o in orders if o.get("status") == "processing")
             recent_count, prior_count = len(recent_7), len(prior_7)
