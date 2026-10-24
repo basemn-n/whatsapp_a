@@ -647,39 +647,88 @@ def create_admin_router(supabase):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>طلب إنشاء متجر جديد</title>
+<meta name="theme-color" content="#173f35">
+<title>إنشاء متجر جديد | مساعد المتاجر</title>
 <style>
-:root{font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#182338;background:#f4f7fc}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at top right,#e4eaff,transparent 40%),#f4f7fc}
-.card{width:min(100%,520px);padding:30px;background:#fff;border:1px solid #e2e8f4;border-radius:24px;box-shadow:0 18px 55px #203b7912}
-.mark{display:grid;place-items:center;width:56px;height:56px;background:#edf1ff;color:#3157d5;border-radius:18px;font-size:26px;margin-bottom:16px}
-h1{font-size:27px;margin:0 0 8px}p{color:#68758c;line-height:1.8;margin:0 0 20px}
-label{display:block;font-weight:650;font-size:14px;margin:13px 0 6px}
-input{width:100%;padding:12px 14px;border:1px solid #d5deed;border-radius:11px;font:inherit}
-input:focus{outline:3px solid #3157d51a;border-color:#3157d5}
-button{width:100%;padding:13px;border:0;border-radius:11px;background:#3157d5;color:#fff;font:inherit;font-weight:700;cursor:pointer;margin-top:18px}
-button:disabled{opacity:.6;cursor:wait}
-.note{font-size:13px;background:#f5f7fc;border:1px solid #e6ebf5;padding:12px;border-radius:11px;margin-top:16px}
-#result{margin-top:15px;padding:12px;border-radius:10px;white-space:pre-wrap;display:none}
-#result.ok{display:block;background:#eaf8f1;color:#176744}#result.error{display:block;background:#fff0ef;color:#a12620}
-a{color:#3157d5}
+:root{color-scheme:light;--green:#173f35;--green-2:#245b4c;--gold:#c49a50;--ink:#20332e;--muted:#6d7b75;--line:#dfe8df;--paper:#fffdf8;--soft:#f4f6ef;--red:#a82d28}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:24px;display:grid;place-items:center;font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:var(--ink);background:radial-gradient(ellipse at 12% 10%,#e3eadb 0,transparent 34%),radial-gradient(ellipse at 90% 90%,#f0e6d2 0,transparent 34%),#f7f7f0}
+a{color:var(--green-2);font-weight:700;text-decoration:none}a:hover{text-decoration:underline}
+.shell{width:min(100%,1040px);display:grid;grid-template-columns:.9fr 1.1fr;overflow:hidden;background:var(--paper);border:1px solid #e5e8dd;border-radius:28px;box-shadow:0 28px 90px #183a2c16}
+.intro{padding:42px;background:linear-gradient(155deg,#173f35,#245b4c);color:#fff;display:flex;flex-direction:column;justify-content:space-between;gap:32px}
+.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:17px}
+.mark{width:48px;height:48px;border-radius:16px;background:#ffffff13;border:1px solid #ffffff38;display:grid;place-items:center;color:#f0d49b;font-size:25px}
+.eyebrow{color:#e4c990;font-size:12px;font-weight:800;letter-spacing:.06em}
+.intro h2{font-size:clamp(27px,3vw,38px);line-height:1.45;margin:12px 0}
+.intro p{color:#e1e9e2;line-height:1.95;margin:0}
+.steps{display:grid;gap:15px;margin-top:28px}
+.step{display:flex;gap:12px;align-items:flex-start;color:#f6f7f1;font-size:14px;line-height:1.8}
+.step-num{flex:0 0 30px;width:30px;height:30px;display:grid;place-items:center;border-radius:10px;background:#ffffff16;border:1px solid #ffffff30;color:#f0d49b;font-weight:800}
+.intro-foot{font-size:12px;color:#d0ddd2;line-height:1.8;border-top:1px solid #ffffff25;padding-top:18px}
+.form-side{padding:clamp(24px,4vw,48px)}
+.form-head{margin-bottom:24px}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;background:#edf3e9;color:var(--green-2);border-radius:99px;font-size:12px;font-weight:800}
+h1{font-size:clamp(25px,3vw,32px);line-height:1.4;margin:14px 0 8px;color:var(--green)}
+.sub{color:var(--muted);font-size:14px;line-height:1.9;margin:0}
+form{display:grid;gap:15px}
+.field{display:grid;gap:7px}
+label{font-size:13px;font-weight:750;color:#30443b}
+input{width:100%;min-width:0;padding:13px 14px;border:1px solid #d8e1d8;border-radius:12px;background:#fff;color:var(--ink);font:inherit;font-size:14px;transition:border-color .15s,box-shadow .15s}
+input::placeholder{color:#9ba79e}
+input:focus{outline:none;border-color:var(--green-2);box-shadow:0 0 0 4px #245b4c15}
+.hint{font-size:11px;color:var(--muted);line-height:1.7}
+.pw-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{font:inherit;cursor:pointer}
+.submit{width:100%;padding:14px 18px;border:0;border-radius:13px;background:var(--green);color:white;font-weight:800;box-shadow:0 8px 18px #173f3520;margin-top:3px;transition:transform .15s,background .15s}
+.submit:hover{background:var(--green-2);transform:translateY(-1px)}
+.submit:disabled{opacity:.65;cursor:wait;transform:none}
+#result{display:none;margin-top:18px;padding:15px;border-radius:14px;white-space:pre-wrap;line-height:1.9;font-size:13px;overflow-wrap:anywhere}
+#result.ok{display:block;background:#edf6ed;color:#205b3b;border:1px solid #cfe4d0}
+#result.error{display:block;background:#fff0ed;color:var(--red);border:1px solid #f2d2cc}
+.notice{margin-top:18px;padding:13px 14px;background:var(--soft);border:1px solid #e7e9df;border-radius:13px;color:var(--muted);font-size:12px;line-height:1.9}
+.form-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:20px;padding-top:18px;border-top:1px solid #e9ece4;font-size:12px;color:var(--muted)}
+@media(max-width:760px){body{padding:12px}.shell{grid-template-columns:1fr;border-radius:22px}.intro{padding:24px;gap:20px}.intro h2{font-size:27px}.intro .steps{grid-template-columns:1fr;gap:10px;margin-top:18px}.intro-foot{display:none}.form-side{padding:25px 20px}.pw-row{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
-<main class="card">
-<div class="mark" aria-hidden="true">▦</div>
-<h1>اطلب إنشاء متجرك</h1>
-<p>أنشئ طلبًا بحسابك وبيانات متجرك. سيقوم المدير العام بمراجعة الطلب قبل تفعيل الدخول إلى لوحة الإدارة.</p>
-<form id="signupForm">
-<label for="storeName">اسم المتجر</label><input id="storeName" required minlength="2" maxlength="160" autocomplete="organization" placeholder="مثال: متجر التقنية الذكية">
-<label for="industry">مجال النشاط (اختياري)</label><input id="industry" maxlength="100" placeholder="ملابس، إلكترونيات، أدوات منزلية...">
-<label for="username">اسم المستخدم</label><input id="username" required minlength="3" maxlength="80" pattern="[A-Za-z0-9_.-]+" autocomplete="username" placeholder="shop_ahmed">
-<label for="password">كلمة المرور</label><input id="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="12 حرفًا على الأقل">
-<label for="confirmPassword">تأكيد كلمة المرور</label><input id="confirmPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="أعد كتابة كلمة المرور">
-<button id="submitBtn" type="submit">إرسال طلب التسجيل</button>
-</form>
-<div id="result" role="status"></div>
-<div class="note">بعد الإرسال، انتظر موافقة المدير العام. لا تشارك كلمة المرور مع أي شخص. <a href="/admin">العودة إلى تسجيل الدخول</a></div>
+<main class="shell">
+<section class="intro" aria-label="خطوات الانضمام">
+  <div>
+    <div class="brand"><div class="mark" aria-hidden="true">▦</div><span>مساعد المتاجر</span></div>
+    <div style="margin-top:44px">
+      <div class="eyebrow">ابدأ رحلتك التجارية</div>
+      <h2>متجرك، منتجاتك، وطلباتك في مكان واحد.</h2>
+      <p>قدّم طلب انضمام بسيطًا. بعد مراجعة الإدارة والموافقة، ستتمكن من الدخول وإدارة متجرك بنفسك.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><span class="step-num">١</span><span><strong>أنشئ طلبك</strong><br>أدخل بيانات المتجر واسم المستخدم وكلمة المرور.</span></div>
+      <div class="step"><span class="step-num">٢</span><span><strong>انتظر المراجعة</strong><br>يراجع مالك التطبيق الطلب قبل تفعيل الحساب.</span></div>
+      <div class="step"><span class="step-num">٣</span><span><strong>ابدأ إدارة متجرك</strong><br>بعد القبول، سجّل الدخول وأضف المنتجات واستقبل الطلبات.</span></div>
+    </div>
+  </div>
+  <div class="intro-foot">حسابك خاص بك. لا تشارك كلمة المرور مع أي شخص.</div>
+</section>
+<section class="form-side">
+  <div class="form-head">
+    <span class="pill"><span aria-hidden="true">✦</span> تسجيل تاجر جديد</span>
+    <h1>اطلب إنشاء متجرك</h1>
+    <p class="sub">املأ البيانات التالية. إنشاء الطلب مجاني ولا يفعّل الدخول تلقائيًا؛ يلزم اعتماد الإدارة أولًا.</p>
+  </div>
+  <form id="signupForm">
+    <div class="field"><label for="storeName">اسم المتجر</label><input id="storeName" required minlength="2" maxlength="160" autocomplete="organization" placeholder="مثال: متجر التقنية الذكية"></div>
+    <div class="field"><label for="industry">مجال النشاط <span class="hint">(اختياري)</span></label><input id="industry" maxlength="100" placeholder="ملابس، إلكترونيات، أدوات منزلية..."></div>
+    <div class="field"><label for="username">اسم المستخدم</label><input id="username" required minlength="3" maxlength="80" pattern="[A-Za-z0-9_.-]+" autocomplete="username" placeholder="shop_ahmed" aria-describedby="usernameHint"><span class="hint" id="usernameHint">استخدم أحرفًا إنجليزية أو أرقامًا أو النقطة أو الشرطة، دون مسافات.</span></div>
+    <div class="pw-row">
+      <div class="field"><label for="password">كلمة المرور</label><input id="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="12 حرفًا على الأقل"><span class="hint">12 حرفًا على الأقل.</span></div>
+      <div class="field"><label for="confirmPassword">تأكيد كلمة المرور</label><input id="confirmPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password" placeholder="أعد كتابة كلمة المرور"></div>
+    </div>
+    <button class="submit" id="submitBtn" type="submit">إرسال طلب الانضمام ←</button>
+  </form>
+  <div id="result" role="status" aria-live="polite"></div>
+  <div class="notice">بعد إرسال الطلب، لن تتمكن من الدخول حتى يوافق المدير العام. احتفظ باسم المستخدم الذي اخترته، وتذكّر أن كلمة المرور لا تُرسل إليك برسالة.</div>
+  <div class="form-foot"><span>لديك حساب بالفعل؟ <a href="/admin">تسجيل الدخول</a></span><a href="/admin">العودة للصفحة الرئيسية</a></div>
+</section>
 </main>
 <script>
 const form=document.getElementById("signupForm");
@@ -689,17 +738,17 @@ form.addEventListener("submit",async event=>{
  const button=document.getElementById("submitBtn");
  const password=document.getElementById("password").value;
  const confirm=document.getElementById("confirmPassword").value;
- result.className="";result.style.display="none";
- if(password!==confirm){result.textContent="كلمتا المرور غير متطابقتين.";result.className="error";return;}
+ result.className="";result.style.display="none";result.textContent="";
+ if(password!==confirm){result.textContent="كلمتا المرور غير متطابقتين. راجعهما ثم حاول مجددًا.";result.className="error";result.style.display="block";document.getElementById("confirmPassword").focus();return;}
  button.disabled=true;button.textContent="جارٍ إرسال الطلب...";
  try{
   const response=await fetch("/api/merchant/signup",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({store_name:document.getElementById("storeName").value.trim(),industry:document.getElementById("industry").value.trim(),username:document.getElementById("username").value.trim(),password})});
   const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error(data.detail||"تعذر إرسال الطلب.");
-  result.textContent="تم استلام طلبك بنجاح. رقم الطلب: "+data.request.id+"\nحالة الطلب: قيد المراجعة. لن يعمل تسجيل الدخول حتى يوافق المدير العام.";
-  result.className="ok";form.reset();
- }catch(error){result.textContent=error.message||"حدث خطأ أثناء إرسال الطلب.";result.className="error";}
- finally{button.disabled=false;button.textContent="إرسال طلب التسجيل";}
+  if(!response.ok)throw new Error(data.detail||"تعذر إرسال الطلب. حاول مرة أخرى.");
+  result.textContent="✓ تم استلام طلبك بنجاح.\nرقم الطلب: "+data.request.id+"\nالحالة: قيد المراجعة.\nالخطوة التالية: انتظر موافقة مالك التطبيق، ثم ارجع إلى صفحة تسجيل الدخول واستخدم اسم المستخدم وكلمة المرور اللذين اخترتهما.";
+  result.className="ok";result.style.display="block";form.reset();result.scrollIntoView({behavior:"smooth",block:"nearest"});
+ }catch(error){result.textContent=error.message||"حدث خطأ أثناء إرسال الطلب.";result.className="error";result.style.display="block";}
+ finally{button.disabled=false;button.textContent="إرسال طلب الانضمام ←";}
 });
 </script>
 </body>
