@@ -1766,7 +1766,8 @@ onclick="resetProductForm()">إلغاء التعديل</button>
     <h2 id="loginTitle">مرحبًا بعودتك</h2>
     <p>سجّل الدخول للانتقال إلى لوحة إدارة متجرك.</p>
     <label for="loginType">نوع الحساب</label>
-    <select id="loginType">
+    <select id="loginType" required>
+      <option value="" selected disabled>اختر نوع الحساب</option>
       <option value="admin">المدير العام</option>
       <option value="merchant">التاجر</option>
     </select>
@@ -1775,7 +1776,7 @@ onclick="resetProductForm()">إلغاء التعديل</button>
     <label for="loginPassword">كلمة المرور</label>
     <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="أدخل كلمة المرور">
     <div id="loginError" class="login-error" role="alert"></div>
-    <button id="loginSubmit" type="submit">دخول إلى لوحة الإدارة</button>
+    <button id="loginSubmit" type="submit">اختر نوع الحساب أولًا</button>
     <div class="login-foot">يتم عرض بيانات المتجر بحسب صلاحية الحساب.<br><a href="/signup" target="_blank" rel="noopener noreferrer">طلب إنشاء متجر جديد</a></div>
   </form>
 </div>
@@ -1926,6 +1927,18 @@ function login() {
   return new Promise(resolve => { loginResolver = resolve; });
 }
 
+function updateLoginButtonLabel() {
+  const type = document.getElementById("loginType").value;
+  const submit = document.getElementById("loginSubmit");
+  submit.textContent = type === "merchant"
+    ? "دخول إلى لوحة التاجر"
+    : type === "admin"
+      ? "دخول إلى لوحة الإدارة"
+      : "اختر نوع الحساب أولًا";
+}
+
+document.getElementById("loginType").addEventListener("change", updateLoginButtonLabel);
+
 document.getElementById("loginForm").addEventListener("submit", async event => {
   event.preventDefault();
   const submit = document.getElementById("loginSubmit");
@@ -1975,7 +1988,7 @@ document.getElementById("loginForm").addEventListener("submit", async event => {
     errorBox.textContent = error.message || "تعذر تسجيل الدخول.";
   } finally {
     submit.disabled = false;
-    submit.textContent = "دخول إلى لوحة الإدارة";
+    updateLoginButtonLabel();
   }
 });
 
