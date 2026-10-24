@@ -380,6 +380,21 @@ def clear_pending_telegram_order(chat_id: int):
         )
 
 
+def clear_pending_order_if_store_changed(chat_id: int, business_id: str):
+    """Discard an unfinished order only after a customer successfully switches stores."""
+    state = load_pending_telegram_order(chat_id)
+    if not isinstance(state, dict):
+        return False
+
+    pending_business_id = str(state.get("business_id") or "").strip()
+    requested_business_id = str(business_id or "").strip()
+    if requested_business_id and pending_business_id == requested_business_id:
+        return False
+
+    clear_pending_telegram_order(chat_id)
+    return True
+
+
 def normalize_text(value: str):
     return " ".join(str(value or "").strip().lower().split())
 
@@ -1495,16 +1510,24 @@ async def process_telegram_update(update: dict):
         if business_id and await asyncio.to_thread(
             save_telegram_business, private_chat_id, business_id
         ):
-            await send_telegram_message(
-                private_chat_id,
+            pending_order_cleared = await asyncio.to_thread(
+                clear_pending_order_if_store_changed, private_chat_id, business_id
+            )
+            welcome_message = (
                 "أهلًا بك في مساعد المتجر! 👋\n"
                 "تم ربط هذه المحادثة بالمتجر الصحيح.\n\n"
                 "لإتمام طلبك بأمان:\n"
                 "1) أرسل «أريد طلب».\n"
                 "2) اختر المنتج من القائمة.\n"
                 "3) أرسل الكمية المطلوبة واتبع التعليمات حتى تأكيد الطلب.\n\n"
-                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة.",
+                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة."
             )
+            if pending_order_cleared:
+                welcome_message += (
+                    "\n\nتم إلغاء الطلب غير المكتمل من المتجر السابق "
+                    "لأنك انتقلت إلى متجر آخر. يمكنك بدء طلب جديد هنا."
+                )
+            await send_telegram_message(private_chat_id, welcome_message)
         else:
             logger.error(
                 "Telegram /start could not bind customer: chat_id=%s payload_supplied=%s configured_business=%s",
