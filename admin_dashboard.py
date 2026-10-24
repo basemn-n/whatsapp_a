@@ -3317,6 +3317,25 @@ if (auth) {
             raise HTTPException(status_code=400, detail="رمز المكافأة يقبل الحروف والأرقام والشرطة فقط.")
         if currency not in {"YER", "SAR", "USD", "AED", "EGP"}:
             raise HTTPException(status_code=400, detail="العملة المحددة غير مدعومة.")
+        try:
+            growth = (
+                supabase.table("store_growth_settings")
+                .select("loyalty_enabled,minimum_redeem_points")
+                .eq("business_id", payload.business_id)
+                .limit(1)
+                .execute()
+            )
+            growth_settings = growth.data[0] if growth.data else {}
+            if not growth_settings.get("loyalty_enabled", True):
+                raise HTTPException(status_code=400, detail="فعّل برنامج الولاء قبل إنشاء مكافأة.")
+            minimum_points = int(growth_settings.get("minimum_redeem_points") or 20)
+            if payload.points_cost < minimum_points:
+                raise HTTPException(status_code=400, detail=f"تكلفة المكافأة يجب ألا تقل عن {minimum_points} نقطة.")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("تعذر التحقق من إعدادات الولاء قبل إنشاء المكافأة.")
+            raise HTTPException(status_code=503, detail="تعذر التحقق من إعدادات الولاء.")
         values = {
             "business_id": payload.business_id,
             "code": code,
