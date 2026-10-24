@@ -1471,6 +1471,9 @@ def download_telegram_photo(file_id: str):
         return None
 
 
+shopping_advisor_last_turn = {}
+
+
 async def respond_to_telegram_text(chat_id: int, user_text: str):
     """Route recognized voice text through the same order and AI flow as typed text."""
     try:
@@ -1492,12 +1495,30 @@ async def respond_to_telegram_text(chat_id: int, user_text: str):
             return "الأوامر المتاحة: /start و /cancel"
 
         settings = await asyncio.to_thread(get_store_growth_settings, business_id)
-        if is_shopping_advice_request(user_text) and settings.get("shopping_advisor_enabled", True):
+        advisor_key = f"{business_id}:{chat_id}"
+        last_advisor_turn = shopping_advisor_last_turn.get(advisor_key, 0)
+        advisor_continuation = (
+            last_advisor_turn and time.monotonic() - last_advisor_turn < 600
+            and load_pending_telegram_order(chat_id) is None
+        )
+        use_advisor = (
+            settings.get("shopping_advisor_enabled", True)
+            and (is_shopping_advice_request(user_text) or advisor_continuation)
+        )
+        if use_advisor:
             products = await asyncio.to_thread(get_available_products, business_id)
             reply = await asyncio.to_thread(
-                generate_shopping_advice, user_text, products, business_id
+                generate_shopping_advice,
+                user_text,
+                products,
+                business_id,
+                f"shopping_advisor_telegram_{chat_id}_{business_id}",
             )
+            shopping_advisor_last_turn[advisor_key] = time.monotonic()
+            if len(shopping_advisor_last_turn) > 2000:
+                shopping_advisor_last_turn.pop(next(iter(shopping_advisor_last_turn)))
         else:
+            shopping_advisor_last_turn.pop(advisor_key, None)
             context = (
                 await asyncio.to_thread(get_business_context, business_id)
                 if business_id else None
