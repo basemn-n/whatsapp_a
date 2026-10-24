@@ -10,9 +10,16 @@ create table if not exists public.store_growth_settings (
     points_per_1000 numeric(12,3) not null default 1 check (points_per_1000 >= 0),
     point_value_yer numeric(12,4) not null default 1 check (point_value_yer > 0),
     minimum_redeem_points integer not null default 20 check (minimum_redeem_points >= 1),
+    repeat_purchase_threshold integer not null default 3 check (repeat_purchase_threshold between 2 and 100),
+    repeat_purchase_bonus_points integer not null default 10 check (repeat_purchase_bonus_points >= 0),
     coupon_expiry_days integer not null default 30 check (coupon_expiry_days between 1 and 365),
     updated_at timestamptz not null default now()
 );
+
+alter table public.store_growth_settings
+    add column if not exists repeat_purchase_threshold integer not null default 3 check (repeat_purchase_threshold between 2 and 100);
+alter table public.store_growth_settings
+    add column if not exists repeat_purchase_bonus_points integer not null default 10 check (repeat_purchase_bonus_points >= 0);
 
 insert into public.store_growth_settings (business_id)
 select id from public.businesses
@@ -117,6 +124,9 @@ declare
     v_points_per_1000 numeric := 1;
     v_enabled boolean := true;
     v_points integer;
+    v_repeat_threshold integer := 3;
+    v_repeat_bonus integer := 10;
+    v_prior_delivered integer := 0;
 begin
     if new.status <> 'delivered' or old.status = 'delivered' then
         return new;
@@ -127,8 +137,8 @@ begin
         return new;
     end if;
 
-    select loyalty_enabled, points_per_1000
-      into v_enabled, v_points_per_1000
+    select loyalty_enabled, points_per_1000, repeat_purchase_threshold, repeat_purchase_bonus_points
+      into v_enabled, v_points_per_1000, v_repeat_threshold, v_repeat_bonus
       from public.store_growth_settings
      where business_id = new.business_id;
 
@@ -137,6 +147,19 @@ begin
     end if;
 
     v_points := floor((greatest(coalesce(new.total_price, 0), 0) / 1000.0) * greatest(coalesce(v_points_per_1000, 1), 0))::integer;
+    v_repeat_threshold := greatest(coalesce(v_repeat_threshold, 3), 2);
+    v_repeat_bonus := greatest(coalesce(v_repeat_bonus, 10), 0);
+
+    select count(*)::integer into v_prior_delivered
+      from public.orders
+     where business_id = new.business_id
+       and telegram_chat_id::text = v_customer_id
+       and status = 'delivered'
+       and id <> new.id;
+
+    if v_repeat_bonus > 0 and mod(v_prior_delivered + 1, v_repeat_threshold) = 0 then
+        v_points := v_points + v_repeat_bonus;
+    end if;
     if v_points <= 0 then
         return new;
     end if;
@@ -178,7 +201,17 @@ as $$
 declare
     v_coupon public.store_coupons%rowtype;
     v_account public.store_loyalty_accounts%rowtype;
+    v_loyalty_enabled boolean := true;
+    v_minimum_points integer := 20;
 begin
+    select loyalty_enabled, minimum_redeem_points
+      into v_loyalty_enabled, v_minimum_points
+      from public.store_growth_settings
+     where business_id = p_business_id;
+    if not coalesce(v_loyalty_enabled, true) then
+        return jsonb_build_object('success', false, 'reason', 'coupon_unavailable');
+    end if;
+
     select * into v_coupon
       from public.store_coupons
      where business_id = p_business_id
@@ -188,7 +221,7 @@ begin
        and (max_redemptions is null or redemption_count < max_redemptions)
      for update;
 
-    if not found then
+    if not found or v_coupon.points_cost < greatest(coalesce(v_minimum_points, 20), 1) then
         return jsonb_build_object('success', false, 'reason', 'coupon_unavailable');
     end if;
 
