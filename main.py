@@ -1810,6 +1810,85 @@ async def process_telegram_update(update: dict):
         await send_telegram_message(private_chat_id, "تم إلغاء الطلب الجاري.")
         return
 
+    # Reminders are strictly opt-in and can be stopped at any time.
+    if user_text.strip().lower() in ("/reminders_on", "أوافق على التذكير", "أوافق على التذكيرات"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if not business_id:
+            await send_telegram_message(private_chat_id, "افتح رابط المتجر واضغط Start أولًا.")
+        elif await asyncio.to_thread(set_telegram_reminder_preference, business_id, private_chat_id, True):
+            await send_telegram_message(private_chat_id, "تم تفعيل تذكير واحد فقط بعد استفسارك عن منتج، إذا لم تُكمل الطلب. لن نرسل تذكيرات متكررة، ويمكنك الإيقاف في أي وقت بإرسال /reminders_off.")
+        else:
+            await send_telegram_message(private_chat_id, "تعذر حفظ موافقتك حاليًا. حاول لاحقًا.")
+        return
+
+    if user_text.strip().lower() in ("/reminders_off", "إيقاف التذكيرات", "ايقاف التذكيرات", "لا ترسل تذكيرات"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if business_id:
+            await asyncio.to_thread(set_telegram_reminder_preference, business_id, private_chat_id, False)
+        await send_telegram_message(private_chat_id, "تم إيقاف التذكيرات لهذا المتجر.")
+        return
+
+    if user_text.strip().lower() in ("لا أريد تذكير", "لا اريد تذكير", "غير مهتم", "غير مهتمة", "ما عاد مهتم", "ما عدت مهتم", "توقف"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if business_id:
+            await asyncio.to_thread(set_telegram_reminder_preference, business_id, private_chat_id, False)
+        await send_telegram_message(private_chat_id, "تم إيقاف التذكيرات. لن نرسل تذكيرات متابعة أخرى لهذا المتجر.")
+        return
+
+    if user_text.strip().lower() in ("/points", "نقاطي", "رصيد النقاط", "نقاط الولاء"):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        if not business_id:
+            await send_telegram_message(private_chat_id, "افتح رابط المتجر واضغط Start أولًا.")
+            return
+        settings = await asyncio.to_thread(get_store_growth_settings, business_id)
+        if not settings.get("loyalty_enabled", True):
+            await send_telegram_message(private_chat_id, "برنامج الولاء غير مفعّل في هذا المتجر حاليًا.")
+            return
+        account = await asyncio.to_thread(get_customer_loyalty, business_id, private_chat_id)
+        if account is None:
+            await send_telegram_message(private_chat_id, "تعذر قراءة نقاطك حاليًا. حاول لاحقًا.")
+            return
+        reply = format_loyalty_summary(
+            account.get("points_balance", 0),
+            account.get("lifetime_points", 0),
+            settings.get("minimum_redeem_points", 100),
+            settings.get("point_value_yer", 1),
+        )
+        reply += "\n\nتُضاف النقاط بعد تحويل الطلب إلى «تم التسليم» فقط. لاستبدال نقاطك أرسل /coupon متبوعًا برمز المكافأة."
+        await send_telegram_message(private_chat_id, reply)
+        return
+
+    if user_text.strip().lower().startswith("/coupon "):
+        business_id = await asyncio.to_thread(get_telegram_business_id, private_chat_id)
+        parts = user_text.strip().split(maxsplit=1)
+        coupon_code = parts[1].strip() if len(parts) > 1 else ""
+        if not business_id or not coupon_code:
+            await send_telegram_message(private_chat_id, "افتح رابط المتجر واضغط Start، ثم أرسل /coupon متبوعًا برمز المكافأة.")
+            return
+        try:
+            redeemed = await asyncio.to_thread(
+                lambda: supabase.rpc("redeem_store_loyalty_coupon", {
+                    "p_business_id": business_id,
+                    "p_customer_external_id": str(private_chat_id),
+                    "p_coupon_code": coupon_code,
+                }).execute().data
+            )
+            if isinstance(redeemed, list):
+                redeemed = redeemed[0] if redeemed else {}
+            if isinstance(redeemed, dict) and redeemed.get("success"):
+                await send_telegram_message(
+                    private_chat_id,
+                    f"تم استبدال النقاط بنجاح! 🎉\nالمكافأة: {redeemed.get('title') or redeemed.get('code')}\nقيمة الخصم المسجلة: {redeemed.get('discount_amount')} {redeemed.get('currency') or 'YER'}\nتنتهي المكافأة: {redeemed.get('expires_at')}\nأظهر هذا الرمز للمتجر عند إتمام الشراء."
+                )
+            else:
+                reason = redeemed.get("reason") if isinstance(redeemed, dict) else None
+                message_text = "نقاطك غير كافية لاستبدال هذه المكافأة." if reason == "insufficient_points" else "رمز المكافأة غير صالح أو منتهي أو وصل إلى حد الاستخدام."
+                await send_telegram_message(private_chat_id, message_text)
+        except Exception:
+            logger.exception("Failed to redeem store loyalty coupon.")
+            await send_telegram_message(private_chat_id, "تعذر استبدال المكافأة الآن. تأكد من تطبيق ترحيل قاعدة البيانات وحاول لاحقًا.")
+        return
+
     # A photo is a visual-search request even when it also has a caption.
     photos = message.get("photo") or []
     if photos:
