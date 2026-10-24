@@ -55,6 +55,8 @@ class StoreGrowthSettingsUpdate(BaseModel):
     points_per_1000: float = Field(default=1, ge=0, le=100000)
     point_value_yer: float = Field(default=1, gt=0, le=100000)
     minimum_redeem_points: int = Field(default=20, ge=1, le=100000000)
+    repeat_purchase_threshold: int = Field(default=3, ge=2, le=100)
+    repeat_purchase_bonus_points: int = Field(default=10, ge=0, le=100000000)
     coupon_expiry_days: int = Field(default=30, ge=1, le=365)
 
 
@@ -1366,6 +1368,8 @@ onclick="resetProductForm()">إلغاء التعديل</button>
       <div><label for="growthPointsRate">النقاط لكل 1000 من قيمة الطلب</label><input id="growthPointsRate" type="number" min="0" max="100000" step="0.1" required></div>
       <div><label for="growthPointValue">القيمة الحسابية للنقطة</label><input id="growthPointValue" type="number" min="0.0001" step="0.01" required></div>
       <div><label for="growthMinimumPoints">الحد الأدنى لاستبدال النقاط</label><input id="growthMinimumPoints" type="number" min="1" required></div>
+      <div><label for="growthRepeatThreshold">عدد الطلبات المسلّمة للحصول على مكافأة التكرار</label><input id="growthRepeatThreshold" type="number" min="2" max="100" required></div>
+      <div><label for="growthRepeatBonus">نقاط إضافية للعميل المتكرر</label><input id="growthRepeatBonus" type="number" min="0" required></div>
       <div><label for="growthCouponExpiry">مدة انتهاء المكافأة الافتراضية (يوم)</label><input id="growthCouponExpiry" type="number" min="1" max="365" required></div>
     </div>
     <div class="form-actions"><button type="submit">حفظ إعدادات الميزات</button><button type="button" class="secondary" onclick="loadStoreGrowth()">إعادة تحميل</button></div>
@@ -1751,6 +1755,8 @@ async function loadStoreGrowth() {
     document.getElementById("growthPointsRate").value = s.points_per_1000 ?? 1;
     document.getElementById("growthPointValue").value = s.point_value_yer ?? 1;
     document.getElementById("growthMinimumPoints").value = s.minimum_redeem_points ?? 20;
+    document.getElementById("growthRepeatThreshold").value = s.repeat_purchase_threshold ?? 3;
+    document.getElementById("growthRepeatBonus").value = s.repeat_purchase_bonus_points ?? 10;
     document.getElementById("growthCouponExpiry").value = s.coupon_expiry_days ?? 30;
     document.getElementById("couponExpiryDays").value = s.coupon_expiry_days ?? 30;
   } catch (error) {
@@ -1771,6 +1777,8 @@ document.getElementById("storeGrowthSettingsForm").addEventListener("submit", as
     points_per_1000: Number(document.getElementById("growthPointsRate").value),
     point_value_yer: Number(document.getElementById("growthPointValue").value),
     minimum_redeem_points: Number(document.getElementById("growthMinimumPoints").value),
+    repeat_purchase_threshold: Number(document.getElementById("growthRepeatThreshold").value),
+    repeat_purchase_bonus_points: Number(document.getElementById("growthRepeatBonus").value),
     coupon_expiry_days: Number(document.getElementById("growthCouponExpiry").value)
   };
   try {
@@ -3229,12 +3237,14 @@ if (auth) {
             "points_per_1000": 1,
             "point_value_yer": 1,
             "minimum_redeem_points": 20,
+            "repeat_purchase_threshold": 3,
+            "repeat_purchase_bonus_points": 10,
             "coupon_expiry_days": 30,
         }
         try:
             result = (
                 supabase.table("store_growth_settings")
-                .select("business_id,shopping_advisor_enabled,followups_enabled,followup_delay_hours,loyalty_enabled,points_per_1000,point_value_yer,minimum_redeem_points,coupon_expiry_days,updated_at")
+                .select("business_id,shopping_advisor_enabled,followups_enabled,followup_delay_hours,loyalty_enabled,points_per_1000,point_value_yer,minimum_redeem_points,repeat_purchase_threshold,repeat_purchase_bonus_points,coupon_expiry_days,updated_at")
                 .eq("business_id", business_id)
                 .limit(1)
                 .execute()
