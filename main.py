@@ -754,6 +754,7 @@ def save_telegram_order(chat_id: int, order_data: dict):
             return None
 
         saved_order = payload.get("order") or {}
+        cancel_customer_followup(business_id, chat_id)
 
         return {
             "order_number": saved_order.get("order_number"),
@@ -1242,9 +1243,15 @@ async def configure_telegram_webhook():
 async def lifespan(app: FastAPI):
     # Use webhook delivery instead of polling to prevent Telegram 409 conflicts.
     await configure_telegram_webhook()
+    followup_task = asyncio.create_task(telegram_followup_worker())
     try:
         yield
     finally:
+        followup_task.cancel()
+        try:
+            await followup_task
+        except asyncio.CancelledError:
+            pass
         logger.info("Application shutdown complete.")
 
 
@@ -1448,19 +1455,30 @@ async def respond_to_telegram_text(chat_id: int, user_text: str):
         if user_text.startswith("/"):
             return "الأوامر المتاحة: /start و /cancel"
 
-        context = (
-            await asyncio.to_thread(get_business_context, business_id)
-            if business_id else None
-        )
-        return await asyncio.to_thread(
-            generate_ai_response,
-            f"telegram_{chat_id}",
-            user_text,
-            None,
-            context,
-            f"telegram_{chat_id}_{business_id or 'default'}",
-            business_id,
-        )
+        settings = await asyncio.to_thread(get_store_growth_settings, business_id)
+        if is_shopping_advice_request(user_text) and settings.get("shopping_advisor_enabled", True):
+            products = await asyncio.to_thread(get_available_products, business_id)
+            reply = await asyncio.to_thread(
+                generate_shopping_advice, user_text, products, business_id
+            )
+        else:
+            context = (
+                await asyncio.to_thread(get_business_context, business_id)
+                if business_id else None
+            )
+            reply = await asyncio.to_thread(
+                generate_ai_response,
+                f"telegram_{chat_id}",
+                user_text,
+                None,
+                context,
+                f"telegram_{chat_id}_{business_id or 'default'}",
+                business_id,
+            )
+
+        if is_product_inquiry(user_text):
+            await asyncio.to_thread(schedule_customer_followup, business_id, chat_id, user_text)
+        return reply
     except Exception:
         logger.exception("فشل معالجة نص Telegram (نص مكتوب أو مستخرج من الصوت).")
         return "عذرًا، حدث خطأ مؤقت أثناء معالجة رسالتك. يرجى المحاولة مرة أخرى."
