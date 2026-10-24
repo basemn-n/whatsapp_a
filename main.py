@@ -11,6 +11,7 @@ import tempfile
 import uuid
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import httpx
 from urllib.parse import urlparse
 
@@ -20,7 +21,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from bot_logic import generate_ai_response, find_products_by_image, transcribe_audio
+from bot_logic import generate_ai_response, generate_shopping_advice, find_products_by_image, transcribe_audio
+from store_growth import extract_topic, format_loyalty_summary, is_product_inquiry, is_shopping_advice_request
 from telegram_products import import_telegram_product_post
 
 load_dotenv()
@@ -307,7 +309,7 @@ def get_available_products(business_id: str):
     try:
         result = (
             supabase.table("products")
-            .select("id, name, description, price, currency, is_available, model_number, stock_quantity")
+            .select("id, name, description, price, currency, is_available, model_number, category, stock_quantity")
             .eq("business_id", business_id)
             .eq("is_available", True)
             .execute()
@@ -330,6 +332,202 @@ def get_available_products(business_id: str):
     except Exception:
         logger.exception("تعذر قراءة المنتجات المتاحة.")
         return []
+
+
+# -----------------------------
+# Store growth: opt-in follow-ups and loyalty
+# -----------------------------
+
+def get_store_growth_settings(business_id: str):
+    defaults = {
+        "shopping_advisor_enabled": True,
+        "followups_enabled": True,
+        "followup_delay_hours": 24,
+        "loyalty_enabled": True,
+        "points_per_1000": 1,
+        "point_value_yer": 1,
+        "minimum_redeem_points": 100,
+        "coupon_expiry_days": 30,
+    }
+    if not supabase or not business_id:
+        return defaults
+    try:
+        result = (
+            supabase.table("store_growth_settings")
+            .select("*")
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return {**defaults, **result.data[0]}
+    except Exception:
+        logger.warning("Store growth settings unavailable; migration may not be applied yet.")
+    return defaults
+
+
+def set_telegram_reminder_preference(business_id: str, chat_id: int, enabled: bool):
+    if not supabase or not business_id:
+        return False
+    try:
+        supabase.table("telegram_customer_preferences").upsert({
+            "business_id": business_id,
+            "telegram_chat_id": str(chat_id),
+            "reminders_opt_in": bool(enabled),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="business_id,telegram_chat_id").execute()
+        if not enabled:
+            cancel_customer_followup(business_id, chat_id)
+        return True
+    except Exception:
+        logger.exception("Could not save Telegram reminder preference.")
+        return False
+
+
+def customer_has_reminder_consent(business_id: str, chat_id: int):
+    if not supabase or not business_id:
+        return False
+    try:
+        result = (
+            supabase.table("telegram_customer_preferences")
+            .select("reminders_opt_in")
+            .eq("business_id", business_id)
+            .eq("telegram_chat_id", str(chat_id))
+            .limit(1)
+            .execute()
+        )
+        return bool(result.data and result.data[0].get("reminders_opt_in"))
+    except Exception:
+        return False
+
+
+def cancel_customer_followup(business_id: str, chat_id: int):
+    if not supabase or not business_id:
+        return
+    try:
+        supabase.table("telegram_customer_followups").update({
+            "status": "cancelled",
+        }).eq("business_id", business_id).eq(
+            "telegram_chat_id", str(chat_id)
+        ).eq("status", "pending").execute()
+    except Exception:
+        logger.warning("Could not cancel Telegram customer follow-up.")
+
+
+def schedule_customer_followup(business_id: str, chat_id: int, user_text: str):
+    """Only schedule a single reminder when the customer has explicitly opted in."""
+    if not supabase or not business_id or not customer_has_reminder_consent(business_id, chat_id):
+        return False
+    settings = get_store_growth_settings(business_id)
+    if not settings.get("followups_enabled", True):
+        return False
+    try:
+        products = get_available_products(business_id)
+        topic = extract_topic(user_text, products)
+        delay_hours = max(1, min(168, int(settings.get("followup_delay_hours") or 24)))
+        due_at = datetime.now(timezone.utc) + timedelta(hours=delay_hours)
+        supabase.table("telegram_customer_followups").upsert({
+            "business_id": business_id,
+            "telegram_chat_id": str(chat_id),
+            "topic": topic,
+            "status": "pending",
+            "due_at": due_at.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "sent_at": None,
+        }, on_conflict="business_id,telegram_chat_id").execute()
+        return True
+    except Exception:
+        logger.exception("Could not schedule Telegram customer follow-up.")
+        return False
+
+
+def get_customer_loyalty(business_id: str, chat_id: int):
+    if not supabase or not business_id:
+        return None
+    try:
+        result = (
+            supabase.table("store_loyalty_accounts")
+            .select("points_balance,lifetime_points")
+            .eq("business_id", business_id)
+            .eq("customer_external_id", str(chat_id))
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else {"points_balance": 0, "lifetime_points": 0}
+    except Exception:
+        logger.exception("Could not load store loyalty account.")
+        return None
+
+
+async def send_due_telegram_followups():
+    """One-shot, consented reminders. Mark sent before network delivery to avoid duplicates."""
+    if not supabase or not TELEGRAM_BOT_TOKEN:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = (
+            supabase.table("telegram_customer_followups")
+            .select("id,business_id,telegram_chat_id,topic,created_at")
+            .eq("status", "pending")
+            .lte("due_at", now)
+            .limit(25)
+            .execute()
+        )
+        for item in result.data or []:
+            business_id = item.get("business_id")
+            chat_id = str(item.get("telegram_chat_id") or "")
+            if not business_id or not chat_id:
+                continue
+            settings = get_store_growth_settings(business_id)
+            if not settings.get("followups_enabled", True) or not customer_has_reminder_consent(business_id, int(chat_id)):
+                cancel_customer_followup(business_id, int(chat_id))
+                continue
+            # If a real order was created after the inquiry, the reminder is no longer relevant.
+            try:
+                orders = (
+                    supabase.table("orders")
+                    .select("id")
+                    .eq("business_id", business_id)
+                    .eq("telegram_chat_id", chat_id)
+                    .gte("created_at", item.get("created_at"))
+                    .neq("status", "cancelled")
+                    .limit(1)
+                    .execute()
+                )
+                if orders.data:
+                    cancel_customer_followup(business_id, int(chat_id))
+                    continue
+            except Exception:
+                # Fail closed: don't send if order-state verification is unavailable.
+                logger.warning("Skipping reminder because order-state verification failed.")
+                continue
+            claimed = (
+                supabase.table("telegram_customer_followups")
+                .update({"status": "sent", "sent_at": now})
+                .eq("id", item["id"])
+                .eq("status", "pending")
+                .execute()
+            )
+            if not claimed.data:
+                continue
+            topic = str(item.get("topic") or "المنتج الذي سألت عنه")[:120]
+            message = (
+                f"مرحبًا! تذكير واحد بناءً على موافقتك: سألتنا عن «{topic}». "
+                "هل ترغب في معرفة تفاصيل إضافية أو المساعدة في اختيار المنتج المناسب؟\n\n"
+                "إذا لم تعد ترغب في التذكيرات، أرسل /reminders_off."
+            )
+            try:
+                await send_telegram_message(int(chat_id), message)
+            except Exception:
+                logger.exception("Could not deliver a scheduled Telegram follow-up.")
+    except Exception:
+        logger.exception("Failed to process scheduled Telegram follow-ups.")
+
+
+async def telegram_followup_worker():
+    while True:
+        await asyncio.sleep(60)
+        await send_due_telegram_followups()
 
 
 # -----------------------------
