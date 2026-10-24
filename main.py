@@ -999,14 +999,8 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
         persist_pending_telegram_order(chat_id, state)
 
         return (
-            "تم تحديث الكمية المطلوبة إلى "
-            f"{quantity} قطعة.\n\n"
-            f"المنتج: {state.get('product_name')}\n"
-            f"الاسم: {state.get('customer_name')}\n"
-            f"الهاتف: {state.get('customer_phone')}\n"
-            f"العنوان: {state.get('customer_address')}\n"
-            f"طريقة الدفع المطلوبة: {state.get('payment_method')}\n\n"
-            "هل تؤكد تسجيل الطلب بهذه الكمية؟ أرسل نعم للتأكيد أو لا للإلغاء."
+            f"تم تحديث الكمية المطلوبة إلى {quantity} قطعة.\n\n"
+            + format_telegram_order_confirmation(state)
         )
 
     if stage == "customer_name":
@@ -1097,6 +1091,19 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
 
         if not redemption:
             return "رمز الخصم غير صالح أو منتهي أو مستخدم، أو لا يخص هذا المتجر/حسابك. أرسل الرمز الصحيح أو «لا»."
+
+        products = get_available_products(state["business_id"])
+        selected_product = next(
+            (item for item in products if str(item.get("id")) == str(state.get("product_id"))),
+            None,
+        )
+        product_currency = (selected_product or {}).get("currency") or "YER"
+        coupon_currency = redemption.get("currency") or "YER"
+        if product_currency.upper() != coupon_currency.upper():
+            return (
+                f"عملة هذا الرمز ({coupon_currency}) لا تطابق عملة المنتج ({product_currency}). "
+                "اختر رمزًا بعملة مناسبة أو أرسل «لا» للمتابعة دون خصم."
+            )
 
         with order_lock:
             state["redemption_code"] = redemption["redemption_code"]
