@@ -9,7 +9,7 @@ create table if not exists public.store_growth_settings (
     loyalty_enabled boolean not null default true,
     points_per_1000 numeric(12,3) not null default 1 check (points_per_1000 >= 0),
     point_value_yer numeric(12,4) not null default 1 check (point_value_yer > 0),
-    minimum_redeem_points integer not null default 100 check (minimum_redeem_points >= 1),
+    minimum_redeem_points integer not null default 20 check (minimum_redeem_points >= 1),
     coupon_expiry_days integer not null default 30 check (coupon_expiry_days between 1 and 365),
     updated_at timestamptz not null default now()
 );
