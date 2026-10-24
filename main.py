@@ -347,6 +347,8 @@ def get_store_growth_settings(business_id: str):
         "points_per_1000": 1,
         "point_value_yer": 1,
         "minimum_redeem_points": 20,
+        "repeat_purchase_threshold": 3,
+        "repeat_purchase_bonus_points": 10,
         "coupon_expiry_days": 30,
     }
     if not supabase or not business_id:
