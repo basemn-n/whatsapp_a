@@ -1083,9 +1083,10 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
             )
 
         if normalized in no_values:
+            cancel_customer_followup(state.get("business_id"), chat_id)
             with order_lock:
                 pending_telegram_orders.pop(chat_id, None)
-            return "تم إلغاء الطلب، ولم يتم حفظه."
+            return "تم إلغاء الطلب، ولم يتم حفظه. لن نرسل تذكيرًا بشأن هذا الطلب."
 
         return "أرسل «نعم» لتأكيد الطلب، أو «لا» لإلغائه."
 
