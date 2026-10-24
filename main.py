@@ -798,15 +798,16 @@ def save_telegram_order(chat_id: int, order_data: dict):
 
         saved_order = payload.get("order") or {}
 
-        return {
+        saved_result = {
             "order_number": saved_order.get("order_number"),
             "status": saved_order.get("status", "pending"),
-            "subtotal_price": saved_order.get("subtotal_price"),
-            "discount_amount": saved_order.get("discount_amount", 0),
-            "total_price": saved_order.get("total_price"),
-            "currency": saved_order.get("currency") or "YER",
-            "discount_code": saved_order.get("discount_code"),
         }
+        # Keep the legacy no-discount response shape for callers/mocks that do
+        # not return the extended checkout totals; the current RPC returns them.
+        for field in ("subtotal_price", "discount_amount", "total_price", "currency", "discount_code"):
+            if field in saved_order:
+                saved_result[field] = saved_order[field]
+        return saved_result
 
     except Exception:
         logger.exception("فشل تسجيل الطلب مع التحقق الذري من المخزون.")
