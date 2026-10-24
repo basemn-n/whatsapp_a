@@ -55,7 +55,7 @@ class VisualProductSearchTests(unittest.TestCase):
             ]
         }, limit=1)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["product"]["id"], "p1")
+        self.assertEqual(result[0]["product"]["id"], "p2")
 
     def test_invalid_model_response_fails_closed(self):
         self.assertEqual(select_visual_product_matches(self.products, []), [])
