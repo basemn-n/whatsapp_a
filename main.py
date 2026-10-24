@@ -1069,6 +1069,8 @@ def handle_telegram_order(chat_id: int, user_text: str, business_id: str):
                     "مع خدمة العملاء."
                 )
 
+            # The order is saved; stop any reminder for this abandoned inquiry.
+            cancel_customer_followup(state.get("business_id"), chat_id)
             clear_pending_telegram_order(chat_id)
 
             return (
