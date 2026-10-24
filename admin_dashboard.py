@@ -1750,7 +1750,7 @@ async function loadStoreGrowth() {
     document.getElementById("growthLoyaltyEnabled").checked = Boolean(s.loyalty_enabled);
     document.getElementById("growthPointsRate").value = s.points_per_1000 ?? 1;
     document.getElementById("growthPointValue").value = s.point_value_yer ?? 1;
-    document.getElementById("growthMinimumPoints").value = s.minimum_redeem_points ?? 100;
+    document.getElementById("growthMinimumPoints").value = s.minimum_redeem_points ?? 20;
     document.getElementById("growthCouponExpiry").value = s.coupon_expiry_days ?? 30;
     document.getElementById("couponExpiryDays").value = s.coupon_expiry_days ?? 30;
   } catch (error) {
