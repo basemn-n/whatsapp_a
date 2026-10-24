@@ -1493,10 +1493,10 @@ async def process_telegram_update(update: dict):
             )
             reply_text = (
                 f"أهلًا {sender_name}، لإتمام طلبك وحفاظًا على خصوصية بياناتك، "
-                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\\n\\n"
-                "1) اضغط الرابط التالي.\\n"
-                "2) اضغط Start في Telegram.\\n"
-                "3) أرسل «أريد طلب» واتبع التعليمات لاختيار المنتج والكمية.\\n\\n"
+                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\n\n"
+                "1) اضغط الرابط التالي.\n"
+                "2) اضغط Start في Telegram.\n"
+                "3) أرسل «أريد طلب» واتبع التعليمات لاختيار المنتج والكمية.\n\n"
                 f"رابط إتمام الطلب: {private_link}"
             )
         else:
@@ -1530,10 +1530,8 @@ async def process_telegram_update(update: dict):
 
     if user_text.startswith("/start"):
         parts = user_text.split(maxsplit=1)
-        # Telegram may deliver a plain /start when a customer opens the bot
-        # directly or has already started it. Use the explicitly configured
-        # product-store mapping only when no deep-link payload was supplied.
-        # A supplied payload always takes precedence to preserve multi-store routing.
+        # A deep-link payload identifies the intended store. A bare /start may
+        # reuse this customer's existing store binding, but must never choose a default store.
         business_id = parts[1].strip() if len(parts) > 1 else ""
         if not business_id:
             # A bare /start must not silently attach the customer to a default store.
