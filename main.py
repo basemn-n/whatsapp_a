@@ -1299,6 +1299,27 @@ def is_telegram_group_admin(chat_id: str, user_id):
         return None
 
 
+def telegram_chat_matches_configured(chat: dict, configured_chat_id: str) -> bool:
+    """Match a Telegram chat allow-list by numeric ID or public @username."""
+    configured = str(configured_chat_id or "").strip()
+    if not configured:
+        return True
+
+    chat_id = str((chat or {}).get("id") or "").strip()
+    if configured == chat_id:
+        return True
+
+    configured_username = configured.lstrip("@").casefold()
+    chat_username = str((chat or {}).get("username") or "").strip().lstrip("@").casefold()
+    # A username is a valid selector only when the incoming chat exposes one.
+    return bool(
+        configured_username
+        and not configured_username.lstrip("-").isdigit()
+        and chat_username
+        and configured_username == chat_username
+    )
+
+
 def is_customer_question_or_request(text: str):
     """Avoid replying to greetings and ordinary group chatter."""
     value = normalize_text(text)
@@ -1334,19 +1355,11 @@ async def process_telegram_update(update: dict):
         source_chat = source_post.get("chat") or {}
         source_chat_id = str(source_chat.get("id") or "")
         configured_chat_id = TELEGRAM_PRODUCTS_CHAT_ID
-        configured_username = (
-            configured_chat_id.lstrip("@").casefold()
-            if configured_chat_id and not configured_chat_id.lstrip("-").isdigit()
-            else ""
-        )
-        source_username = str(source_chat.get("username") or "").casefold()
 
         # An optional env setting is only an allow-list for the external channel.
+        # Accept either Telegram's numeric chat ID or its public username.
         # The merchant is ALWAYS resolved from the explicit DB mapping.
-        if configured_chat_id and not (
-            configured_chat_id == source_chat_id
-            or (configured_username and source_username == configured_username)
-        ):
+        if not telegram_chat_matches_configured(source_chat, configured_chat_id):
             return
 
         try:
@@ -1383,8 +1396,8 @@ async def process_telegram_update(update: dict):
 
     # Group replies/imports are allowed only for groups explicitly mapped to a store.
     # An optional env chat ID narrows the allow-list; it never chooses a business.
-    if chat_type in ("group", "supergroup") and (
-        not TELEGRAM_PRODUCTS_CHAT_ID or chat_id == TELEGRAM_PRODUCTS_CHAT_ID
+    if chat_type in ("group", "supergroup") and telegram_chat_matches_configured(
+        chat, TELEGRAM_PRODUCTS_CHAT_ID
     ):
         business_id = await asyncio.to_thread(
             get_channel_business_id, "telegram_products", chat_id
