@@ -378,6 +378,39 @@ def set_telegram_reminder_preference(business_id: str, chat_id: int, enabled: bo
         }, on_conflict="business_id,telegram_chat_id").execute()
         if not enabled:
             cancel_customer_followup(business_id, chat_id)
+        else:
+            # If consent is given after the inquiry, queue only the most recent
+            # unsatisfied inquiry from the last day; never revive one followed by an order.
+            recent = (
+                supabase.table("telegram_customer_followups")
+                .select("id,created_at")
+                .eq("business_id", business_id)
+                .eq("telegram_chat_id", str(chat_id))
+                .eq("status", "cancelled")
+                .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat())
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if recent.data:
+                inquiry = recent.data[0]
+                orders = (
+                    supabase.table("orders")
+                    .select("id")
+                    .eq("business_id", business_id)
+                    .eq("telegram_chat_id", str(chat_id))
+                    .gte("created_at", inquiry.get("created_at"))
+                    .neq("status", "cancelled")
+                    .limit(1)
+                    .execute()
+                )
+                if not orders.data:
+                    settings = get_store_growth_settings(business_id)
+                    delay_hours = max(1, min(168, int(settings.get("followup_delay_hours") or 24)))
+                    supabase.table("telegram_customer_followups").update({
+                        "status": "pending",
+                        "due_at": (datetime.now(timezone.utc) + timedelta(hours=delay_hours)).isoformat(),
+                    }).eq("id", inquiry["id"]).eq("status", "cancelled").execute()
         return True
     except Exception:
         logger.exception("Could not save Telegram reminder preference.")
@@ -415,8 +448,8 @@ def cancel_customer_followup(business_id: str, chat_id: int):
 
 
 def schedule_customer_followup(business_id: str, chat_id: int, user_text: str):
-    """Only schedule a single reminder when the customer has explicitly opted in."""
-    if not supabase or not business_id or not customer_has_reminder_consent(business_id, chat_id):
+    """Remember a short inquiry label; queue delivery only after explicit consent."""
+    if not supabase or not business_id:
         return False
     settings = get_store_growth_settings(business_id)
     if not settings.get("followups_enabled", True):
@@ -424,18 +457,20 @@ def schedule_customer_followup(business_id: str, chat_id: int, user_text: str):
     try:
         products = get_available_products(business_id)
         topic = extract_topic(user_text, products)
+        now = datetime.now(timezone.utc)
         delay_hours = max(1, min(168, int(settings.get("followup_delay_hours") or 24)))
-        due_at = datetime.now(timezone.utc) + timedelta(hours=delay_hours)
+        opted_in = customer_has_reminder_consent(business_id, chat_id)
+        due_at = now + timedelta(hours=delay_hours)
         supabase.table("telegram_customer_followups").upsert({
             "business_id": business_id,
             "telegram_chat_id": str(chat_id),
             "topic": topic,
-            "status": "pending",
+            "status": "pending" if opted_in else "cancelled",
             "due_at": due_at.isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": now.isoformat(),
             "sent_at": None,
         }, on_conflict="business_id,telegram_chat_id").execute()
-        return True
+        return opted_in
     except Exception:
         logger.exception("Could not schedule Telegram customer follow-up.")
         return False
@@ -1785,7 +1820,8 @@ async def process_telegram_update(update: dict):
                 "1) أرسل «أريد طلب».\n"
                 "2) اختر المنتج من القائمة.\n"
                 "3) أرسل الكمية المطلوبة واتبع التعليمات حتى تأكيد الطلب.\n\n"
-                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة."
+                "يمكنك أيضًا السؤال عن المنتجات والأسعار المتاحة.\n"
+                "إذا رغبت في تذكير واحد بعد استفسارك، أرسل /reminders_on؛ ولن نرسل تذكيرات دون موافقتك."
             )
             if pending_order_cleared:
                 welcome_message += (
