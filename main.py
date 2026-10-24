@@ -36,6 +36,7 @@ FACEBOOK_VERIFY_TOKEN = os.getenv("FACEBOOK_VERIFY_TOKEN", "").strip()
 FACEBOOK_PAGE_ACCESS_TOKEN = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
 FACEBOOK_PAGE_ID = os.getenv("FACEBOOK_PAGE_ID", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
 # Telegram catalog imports must use an explicit channel_connections mapping.
 # Optional chat ID restricts which groups/channels are considered; it never chooses a store.
 TELEGRAM_PRODUCTS_CHAT_ID = os.getenv("TELEGRAM_PRODUCTS_CHAT_ID", "").strip()
@@ -1437,18 +1438,25 @@ async def process_telegram_update(update: dict):
         sender_name = str(sender.get("first_name") or "عميل").strip()
         reply_to = message.get("message_id")
         if is_customer_order_intent(user_text):
-            private_link = (
-                "https://t.me/SmartCustomerHelp2026Bot?start="
-                + str(business_id)
-            )
-            reply_text = (
+            intro = (
                 f"أهلًا {sender_name}، لإتمام طلبك وحفاظًا على خصوصية بياناتك، "
-                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\n\n"
-                "1) اضغط الرابط التالي.\n"
-                "2) اضغط Start في Telegram.\n"
-                "3) أرسل «أريد طلب» واتبع التعليمات لاختيار المنتج والكمية.\n\n"
-                f"رابط إتمام الطلب: {private_link}"
+                "سنكمل معك عبر المحادثة الخاصة مع مساعد المتجر.\\n\\n"
+                "1) افتح رابط مساعد المتجر الذي نشره صاحب المتجر.\\n"
+                "2) اضغط Start في Telegram.\\n"
+                "3) أرسل «أريد طلب» واتبع التعليمات لاختيار المنتج والكمية."
             )
+            if TELEGRAM_BOT_USERNAME:
+                private_link = (
+                    f"https://t.me/{TELEGRAM_BOT_USERNAME}?start={business_id}"
+                )
+                reply_text = intro + f"\\n\\nرابط إتمام الطلب: {private_link}"
+            else:
+                # Never hard-code one merchant's bot username into all stores.
+                reply_text = (
+                    intro
+                    + "\\n\\nلم يُضبط اسم مستخدم البوت في إعدادات النظام؛ "
+                    "يرجى استخدام رابط مساعد المتجر الموجود في وصف المتجر."
+                )
         else:
             context = await asyncio.to_thread(get_business_context, business_id)
             if not context:
