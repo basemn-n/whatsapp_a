@@ -227,6 +227,7 @@ def generate_shopping_advice(
     business_id: str = None,
 ) -> str:
     """Give conversational purchase advice using only this store's live catalog."""
+    import json
     eligible = []
     for product in (products or [])[:100]:
         if not isinstance(product, dict):
