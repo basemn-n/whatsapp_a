@@ -903,6 +903,10 @@ form.addEventListener("submit",async event=>{
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="{description or store_name}">
+<link rel="manifest" href="/store/{business_id}/manifest.webmanifest">
+<meta name="theme-color" content="#123c36">
+<link rel="icon" type="image/svg+xml" href="/app-icon.svg">
+<link rel="apple-touch-icon" href="/app-icon.svg">
 <title>{store_name} | المتجر</title>
 <style>
 :root{{color-scheme:light;--ink:#172033;--muted:#64748b;--line:#e2e8f0;--accent:#0f766e;--soft:#f1f5f9}}
@@ -919,10 +923,10 @@ main{{padding:28px 0 54px}}.section-title{{display:flex;align-items:end;justify-
 .price{{font-size:23px;font-weight:700;margin:18px 0 14px}}.price small{{font-size:13px;color:var(--muted);font-weight:400}}
 .order{{margin-top:auto;display:block;text-align:center;text-decoration:none;background:var(--accent);color:white;border-radius:10px;padding:11px 12px;font-weight:700}}
 .order:hover{{background:#115e59}}footer{{border-top:1px solid var(--line);padding:20px;text-align:center;color:var(--muted);font-size:13px}}
-.empty{{grid-column:1/-1;text-align:center;padding:42px 20px}}.empty p{{color:var(--muted)}}.store-search{{width:100%;max-width:520px;padding:13px 15px;border:1px solid var(--line);border-radius:12px;margin:0 0 18px;font:inherit}}.store-search:focus{{outline:3px solid #0f766e22;border-color:#0f766e}}.no-match{{display:none;grid-column:1/-1}}
+.empty{{grid-column:1/-1;text-align:center;padding:42px 20px}}.empty p{{color:var(--muted)}}.store-search{{width:100%;max-width:520px;padding:13px 15px;border:1px solid var(--line);border-radius:12px;margin:0 0 18px;font:inherit}}.store-search:focus{{outline:3px solid #0f766e22;border-color:#0f766e}}.no-match{{display:none;grid-column:1/-1}}.install-store{{display:inline-flex;align-items:center;justify-content:center;margin-top:18px;padding:10px 16px;border:1px solid #ffffff70;border-radius:10px;color:white;background:#ffffff18;font:inherit;font-weight:700;cursor:pointer}}
 </style></head>
 <body>
-<header><div class="wrap"><div class="eyebrow">{industry or "المتجر الرسمي"}</div><h1>{store_name}</h1><p class="intro">{description or "تصفح المنتجات المتاحة وتواصل معنا للاستفسار أو تقديم طلب."}</p></div></header>
+<header><div class="wrap"><div class="eyebrow">{industry or "المتجر الرسمي"}</div><h1>{store_name}</h1><p class="intro">{description or "تصفح المنتجات المتاحة وتواصل معنا للاستفسار أو تقديم طلب."}</p><button class="install-store" id="installStoreBtn" type="button">تثبيت المتجر على الجهاز</button></div></header>
 <main class="wrap"><div class="section-title"><h2>المنتجات المتاحة</h2><span class="count" id="productCount">{len(products)} منتج</span></div><input class="store-search" id="storeSearch" type="search" placeholder="ابحث باسم المنتج أو الموديل أو التصنيف..." aria-label="البحث في منتجات المتجر"><section class="grid" id="storeProductGrid">{product_html}<div class="empty no-match" id="noMatch"><h2>لا توجد نتائج مطابقة</h2><p>جرّب كلمة بحث أخرى أو رقم الموديل.</p></div></section></main>
 <footer>للاستفسار والطلب، استخدم رابط التواصل الموجود في بطاقة المنتج.</footer>
 <script>
@@ -941,9 +945,73 @@ searchInput.addEventListener("input",()=>{{
   noMatch.style.display=visible===0?"block":"none";
   count.textContent=visible.toLocaleString("ar")+" منتج";
 }});
+let deferredStoreInstall = null;
+const installStoreBtn = document.getElementById("installStoreBtn");
+window.addEventListener("beforeinstallprompt", event => {{
+  event.preventDefault();
+  deferredStoreInstall = event;
+}});
+installStoreBtn.addEventListener("click", async () => {{
+  if (deferredStoreInstall) {{
+    deferredStoreInstall.prompt();
+    await deferredStoreInstall.userChoice;
+    deferredStoreInstall = null;
+    return;
+  }}
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  alert(isIOS
+    ? "لتثبيت المتجر على iPhone أو iPad: افتح قائمة المشاركة في Safari ثم اختر «إضافة إلى الشاشة الرئيسية»."
+    : "افتح قائمة المتصفح واختر «تثبيت التطبيق» أو «إضافة الصفحة إلى الشاشة الرئيسية». إذا لم يظهر الخيار، جرّب فتح الصفحة عبر Chrome أو Edge.");
+}});
+window.addEventListener("appinstalled", () => {{
+  installStoreBtn.textContent = "تم تثبيت المتجر";
+}});
+if ("serviceWorker" in navigator && location.protocol === "https:") {{
+  window.addEventListener("load", () => {{
+    navigator.serviceWorker.register("/service-worker.js", {{updateViaCache: "none"}})
+      .then(registration => registration.update())
+      .catch(() => {{}});
+  }});
+}}
 </script>
 </body></html>"""
         return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
+
+    @router.get("/store/{business_id}/manifest.webmanifest")
+    def public_store_manifest(business_id: str):
+        import re
+
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", business_id):
+            raise HTTPException(status_code=404, detail="المتجر غير موجود")
+        store_name = "متجر إلكتروني"
+        try:
+            result = supabase.table("businesses").select("name").eq("id", business_id).limit(1).execute()
+            if result.data:
+                store_name = str(result.data[0].get("name") or store_name)
+        except Exception:
+            logger.warning("تعذر قراءة اسم المتجر لبيان التثبيت.")
+        manifest = {
+            "id": f"/store/{business_id}",
+            "name": store_name,
+            "short_name": store_name[:24],
+            "description": f"تصفح منتجات {store_name} واطلبها بسهولة",
+            "lang": "ar",
+            "dir": "rtl",
+            "start_url": f"/store/{business_id}",
+            "scope": "/",
+            "display": "standalone",
+            "orientation": "any",
+            "background_color": "#f8fafc",
+            "theme_color": "#123c36",
+            "icons": [
+                {"src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+            ]
+        }
+        return Response(
+            content=json.dumps(manifest, ensure_ascii=False),
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @router.get("/manifest.webmanifest")
     def store_app_manifest():
@@ -986,7 +1054,8 @@ searchInput.addEventListener("input",()=>{{
 
     @router.get("/service-worker.js")
     def store_service_worker():
-        worker = """const CACHE = "store-admin-shell-v1";
+        worker = """const CACHE = "store-app-shell-v2";
+const CACHE_PREFIX = "store-app-shell-";
 const SHELL = ["/manifest.webmanifest", "/app-icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
@@ -994,7 +1063,9 @@ self.addEventListener("install", event => {
 });
 self.addEventListener("activate", event => {
   event.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+    caches.keys().then(keys => Promise.all(
+      keys.filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE).map(key => caches.delete(key))
+    ))
   );
   self.clients.claim();
 });
@@ -3299,7 +3370,11 @@ async function installStoreApp() {
     : "إذا لم يظهر مربع التثبيت، افتح قائمة المتصفح واختر «تثبيت التطبيق» أو «إضافة الصفحة إلى الشاشة الرئيسية».");
 }
 if ("serviceWorker" in navigator && location.protocol === "https:") {
-  window.addEventListener("load", () => navigator.serviceWorker.register("/service-worker.js").catch(() => {}));
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js", {updateViaCache: "none"})
+      .then(registration => registration.update())
+      .catch(() => {});
+  });
 }
 
 updateUndoButton();
